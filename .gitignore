@@ -1,12 +1,13 @@
 node_modules/
-.next/
-out/
-build/
+/.next/
+/out/
+/build/
 *.tsbuildinfo
 next-env.d.ts
 
 # Local data: SQLite database and uploaded garment/body photos.
-data/
+# Leading slash matters — an unanchored `data/` would also swallow src/lib/data/.
+/data/
 
 .env
 .env.local
