@@ -99,38 +99,88 @@ export function planPacking(
     for (const c of list) for (const g of c.garments) allCandidateItems.set(g.id, g);
   }
 
+  /*
+   * The greedy step has to be a whole outfit, not a single garment. A day is
+   * only covered once every piece of some outfit is packed, so the marginal
+   * gain of any one garment is zero until the last of its set arrives — a
+   * per-garment greedy scores nothing on the first step and stops there.
+   *
+   * Choosing the outfit with the best days-covered-per-new-item ratio starts
+   * correctly and still prefers outfits that reuse what's already packed,
+   * which is the entire point of packing light.
+   */
+  const allCandidates = Array.from(candidates.values()).flat();
   let best = coveredBy(selected);
-  for (let step = 0; step < plan.maxItems; step++) {
-    let bestGain = 0;
-    let bestItem: Garment | null = null;
-    let bestAssignments = best;
 
-    for (const [id, garment] of allCandidateItems) {
-      if (selected.has(id)) continue;
+  while (selected.size < plan.maxItems && best.length < dayNeeds.length) {
+    let bestRatio = 0;
+    let bestPick: { items: string[]; assignments: PackingResult["outfits"] } | null = null;
+
+    for (const c of allCandidates) {
+      const newItems = c.garments.filter((g) => !selected.has(g.id)).map((g) => g.id);
+      if (selected.size + newItems.length > plan.maxItems) continue;
+
       const trial = new Set(selected);
-      trial.add(id);
+      for (const id of newItems) trial.add(id);
       const assignments = coveredBy(trial);
-      // Coverage first, outfit quality as the tie-break.
-      const gain =
-        (assignments.length - best.length) * 100 +
-        (assignments.reduce((s, a) => s + a.score, 0) -
-          best.reduce((s, a) => s + a.score, 0)) *
-          0.1;
-      if (gain > bestGain) {
-        bestGain = gain;
-        bestItem = garment;
-        bestAssignments = assignments;
+      const gain = assignments.length - best.length;
+      if (gain <= 0) continue;
+
+      // Cost is what this adds to the case; reusing packed pieces is free,
+      // which is what makes the set shrink. Outfit quality only breaks ties.
+      const ratio =
+        gain / Math.max(1, newItems.length) +
+        assignments.reduce((s, a) => s + a.score, 0) * 1e-5;
+
+      if (ratio > bestRatio) {
+        bestRatio = ratio;
+        bestPick = { items: newItems, assignments };
       }
     }
 
-    if (!bestItem) break;
-    selected.add(bestItem.id);
-    best = bestAssignments;
-    if (best.length === dayNeeds.length && selected.size >= 4) {
-      // Everything is covered. Keep going only while items still add variety.
-      const remaining = plan.maxItems - selected.size;
-      if (remaining <= 0) break;
+    if (!bestPick) break;
+    for (const id of bestPick.items) selected.add(id);
+    best = bestPick.assignments;
+  }
+
+  /*
+   * Coverage is the constraint; variety is what the rest of the budget is for.
+   * A minimal pack is technically correct and practically unwearable — the same
+   * four pieces every day for a week — so keep spending, now on whatever adds
+   * the most distinct outfits per extra item, never at the cost of coverage.
+   */
+  const distinctOutfits = (a: PackingResult["outfits"]) =>
+    new Set(a.map((o) => o.garments.map((g) => g.id).sort().join("|"))).size;
+
+  while (selected.size < plan.maxItems) {
+    const baseline = distinctOutfits(best);
+    let bestRatio = 0;
+    let bestPick: { items: string[]; assignments: PackingResult["outfits"] } | null = null;
+
+    for (const c of allCandidates) {
+      const newItems = c.garments.filter((g) => !selected.has(g.id)).map((g) => g.id);
+      if (!newItems.length) continue;
+      if (selected.size + newItems.length > plan.maxItems) continue;
+
+      const trial = new Set(selected);
+      for (const id of newItems) trial.add(id);
+      const assignments = coveredBy(trial);
+      if (assignments.length < best.length) continue;
+
+      const gain = distinctOutfits(assignments) - baseline;
+      if (gain <= 0) continue;
+
+      const ratio =
+        gain / newItems.length + assignments.reduce((s, a) => s + a.score, 0) * 1e-5;
+      if (ratio > bestRatio) {
+        bestRatio = ratio;
+        bestPick = { items: newItems, assignments };
+      }
     }
+
+    if (!bestPick) break;
+    for (const id of bestPick.items) selected.add(id);
+    best = bestPick.assignments;
   }
 
   const items = Array.from(selected)

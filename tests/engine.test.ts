@@ -14,6 +14,7 @@ import { outfitClo, neutralTemp, scoreWeather } from "../src/lib/engine/weather.
 import { scoreOutfit } from "../src/lib/engine/index.ts";
 import { computeCalibrations } from "../src/lib/engine/calibration.ts";
 import { findOutfits } from "../src/lib/engine/combos.ts";
+import { planPacking } from "../src/lib/engine/packing.ts";
 import type { Garment, Profile } from "../src/lib/types.ts";
 
 /* ------------------------------------------------------------- fixtures -- */
@@ -576,5 +577,77 @@ describe("outfit search", () => {
 
   test("an empty wardrobe returns nothing rather than throwing", () => {
     assert.deepEqual(findOutfits([], profile, {}, {}), []);
+  });
+});
+
+/* -------------------------------------------------------------- packing -- */
+
+describe("packing", () => {
+  const wardrobe = [
+    garment({ name: "Oxford", subcategory: "oxford-shirt", formality: 3, measurements: { chestFlat: 56 }, colors: [{ hex: "#f2f0ea", share: 1 }] }),
+    garment({ name: "Knit", subcategory: "crew-sweater", formality: 3, measurements: { chestFlat: 56 }, fabric: { wool: 1 }, colors: [{ hex: "#26303f", share: 1 }] }),
+    garment({ name: "Tee", subcategory: "t-shirt", formality: 1, measurements: { chestFlat: 54 }, colors: [{ hex: "#1b1b1d", share: 1 }] }),
+    garment({ name: "Chinos", category: "bottom", subcategory: "chinos", formality: 3, measurements: { waistFlat: 45, inseam: 80 }, colors: [{ hex: "#3b4253", share: 1 }] }),
+    garment({ name: "Jeans", category: "bottom", subcategory: "jeans", formality: 2, measurements: { waistFlat: 44, inseam: 80 }, colors: [{ hex: "#4d647f", share: 1 }] }),
+    garment({ name: "Loafers", category: "shoes", subcategory: "loafers", formality: 3, colors: [{ hex: "#4a3527", share: 1 }] }),
+    garment({ name: "Sneakers", category: "shoes", subcategory: "minimal-sneakers", formality: 2, colors: [{ hex: "#eae7e0", share: 1 }] }),
+  ];
+
+  const trip = {
+    days: 4,
+    itinerary: ["office", "casual-social", "office", "smart-casual"] as const,
+    tempLowC: 12,
+    tempHighC: 22,
+    rain: false,
+    maxItems: 10,
+  };
+
+  /**
+   * The regression that motivated these: selection used to advance one garment
+   * at a time, but a day is only covered once a whole outfit is present — so
+   * marginal gain was zero on the first step and the planner returned nothing
+   * at all, for every possible trip.
+   */
+  test("covers the itinerary rather than returning nothing", () => {
+    const plan = planPacking(wardrobe, profile, { ...trip, itinerary: [...trip.itinerary] });
+    assert.ok(plan.items.length > 0, "packed nothing");
+    assert.equal(plan.outfits.length, trip.days);
+    assert.equal(plan.uncovered.length, 0);
+  });
+
+  test("every assigned outfit is built only from packed items", () => {
+    const plan = planPacking(wardrobe, profile, { ...trip, itinerary: [...trip.itinerary] });
+    const packed = new Set(plan.items.map((i) => i.id));
+    for (const o of plan.outfits) {
+      for (const g of o.garments) assert.ok(packed.has(g.id), `${g.name} was never packed`);
+    }
+  });
+
+  test("never exceeds the item cap", () => {
+    for (const maxItems of [3, 4, 6, 10]) {
+      const plan = planPacking(wardrobe, profile, { ...trip, itinerary: [...trip.itinerary], maxItems });
+      assert.ok(plan.items.length <= maxItems, `packed ${plan.items.length} with a cap of ${maxItems}`);
+      assert.equal(plan.outfits.length + plan.uncovered.length, trip.days);
+    }
+  });
+
+  test("says so when the cap makes the trip uncoverable", () => {
+    // Two items cannot complete an outfit, so the shortfall has to be reported
+    // rather than quietly returning a plan that doesn't work.
+    const plan = planPacking(wardrobe, profile, { ...trip, itinerary: [...trip.itinerary], maxItems: 2 });
+    assert.equal(plan.uncovered.length, trip.days);
+    assert.ok(plan.notes.some((n) => n.includes("couldn't be covered")));
+  });
+
+  test("spends spare capacity on variety instead of repeating one outfit", () => {
+    const plan = planPacking(wardrobe, profile, { ...trip, itinerary: [...trip.itinerary] });
+    const distinct = new Set(plan.outfits.map((o) => o.garments.map((g) => g.id).sort().join("|")));
+    assert.ok(distinct.size > 1, "packed the same outfit for every day of the trip");
+  });
+
+  test("an empty wardrobe returns an empty plan rather than throwing", () => {
+    const plan = planPacking([], profile, { ...trip, itinerary: [...trip.itinerary] });
+    assert.deepEqual(plan.items, []);
+    assert.equal(plan.uncovered.length, trip.days);
   });
 });
