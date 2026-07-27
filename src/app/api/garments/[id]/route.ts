@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { deleteGarment, getGarment, saveGarment } from "@/lib/db";
-import { compact, garmentInputSchema } from "@/lib/validate";
+import { compact, garmentInputSchema, garmentPatchSchema } from "@/lib/validate";
+import { readJsonBody } from "@/lib/http";
 import type { Garment } from "@/lib/types";
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -15,16 +16,28 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   const existing = await getGarment(id);
   if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  const body = await req.json();
+  const read = await readJsonBody(req);
+  if (!read.ok) return read.response;
+  const body = read.data;
 
   // Small toggles (laundry state, rating, archive) shouldn't require the client
-  // to round-trip the whole garment.
-  if (body.__patch === true) {
+  // to round-trip the whole garment. The flag is read defensively because the
+  // body is whatever the caller sent — including `null`, which would throw on a
+  // property access and surface as a 500.
+  const isQuickPatch =
+    typeof body === "object" && body !== null && (body as { __patch?: unknown }).__patch === true;
+
+  if (isQuickPatch) {
+    const quick = garmentPatchSchema.safeParse(body);
+    if (!quick.success) {
+      return NextResponse.json({ error: "Invalid patch", issues: quick.error.issues }, { status: 400 });
+    }
     const updated: Garment = {
       ...existing,
-      careState: body.careState ?? existing.careState,
-      rating: body.rating ?? existing.rating,
-      archivedAt: body.archivedAt !== undefined ? body.archivedAt : existing.archivedAt,
+      careState: quick.data.careState ?? existing.careState,
+      rating: quick.data.rating ?? existing.rating,
+      archivedAt:
+        quick.data.archivedAt !== undefined ? quick.data.archivedAt : existing.archivedAt,
     };
     await saveGarment(updated);
     return NextResponse.json({ garment: updated });

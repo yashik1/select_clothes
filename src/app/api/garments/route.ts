@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { listGarments, newId, nowIso, saveGarment } from "@/lib/db";
 import { compact, garmentInputSchema } from "@/lib/validate";
+import { parseJsonBody } from "@/lib/http";
 import type { Garment } from "@/lib/types";
 
 export async function GET() {
@@ -8,14 +9,8 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-  const body = await req.json();
-  const parsed = garmentInputSchema.safeParse(body);
-  if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Invalid garment", issues: parsed.error.issues },
-      { status: 400 },
-    );
-  }
+  const parsed = await parseJsonBody(req, garmentInputSchema, "Invalid garment");
+  if (!parsed.ok) return parsed.response;
 
   const now = nowIso();
   const input = parsed.data;

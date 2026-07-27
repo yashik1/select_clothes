@@ -6,6 +6,7 @@ import {
 } from "@/lib/db";
 import { computeCalibrations } from "@/lib/engine/calibration";
 import { occasionSchema } from "@/lib/validate";
+import { parseJsonBody } from "@/lib/http";
 
 const schema = z.object({
   garmentIds: z.array(z.string()).min(1),
@@ -27,10 +28,8 @@ const schema = z.object({
 });
 
 export async function POST(req: Request) {
-  const parsed = schema.safeParse(await req.json());
-  if (!parsed.success) {
-    return NextResponse.json({ error: "Invalid request", issues: parsed.error.issues }, { status: 400 });
-  }
+  const parsed = await parseJsonBody(req, schema);
+  if (!parsed.ok) return parsed.response;
   const input = parsed.data;
   const now = nowIso();
 

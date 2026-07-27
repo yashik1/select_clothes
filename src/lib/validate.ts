@@ -4,6 +4,8 @@ const hex = z.string().regex(/^#[0-9a-fA-F]{6}$/, "Expected a #rrggbb colour");
 
 const numberish = z.union([z.number(), z.null()]).optional();
 
+const CARE_STATES = ["clean", "laundry", "repair", "stored", "loaned"] as const;
+
 export const measurementsSchema = z
   .object({
     height: numberish, weight: numberish, neck: numberish, shoulderWidth: numberish,
@@ -45,7 +47,7 @@ export const garmentInputSchema = z.object({
   fitIntent: z.enum(["slim", "regular", "relaxed", "oversized"]),
   measurements: garmentMeasurementsSchema,
   seasons: z.array(z.enum(["spring", "summer", "autumn", "winter"])),
-  careState: z.enum(["clean", "laundry", "repair", "stored", "loaned"]),
+  careState: z.enum(CARE_STATES),
   pricePaid: numberish,
   currency: z.string().max(6).optional(),
   purchasedAt: z.string().optional(),
@@ -58,6 +60,19 @@ export const garmentInputSchema = z.object({
 });
 
 export type GarmentInput = z.infer<typeof garmentInputSchema>;
+
+/**
+ * The quick-toggle payload — laundry state, rating, archive — so the client
+ * doesn't have to round-trip a whole garment to say it's in the wash. These
+ * fields are written straight onto the stored row, so they get validated just
+ * as strictly as a full save.
+ */
+export const garmentPatchSchema = z.object({
+  __patch: z.literal(true),
+  careState: z.enum(CARE_STATES).optional(),
+  rating: numberish,
+  archivedAt: z.string().nullable().optional(),
+});
 
 export const profileInputSchema = z.object({
   name: z.string().min(1).max(80),

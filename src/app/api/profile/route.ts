@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getOrCreateProfile, saveProfile } from "@/lib/db";
 import { compact, profileInputSchema } from "@/lib/validate";
+import { parseJsonBody } from "@/lib/http";
 import type { Profile } from "@/lib/types";
 
 export async function GET() {
@@ -8,11 +9,8 @@ export async function GET() {
 }
 
 export async function PUT(req: Request) {
-  const body = await req.json();
-  const parsed = profileInputSchema.safeParse(body);
-  if (!parsed.success) {
-    return NextResponse.json({ error: "Invalid profile", issues: parsed.error.issues }, { status: 400 });
-  }
+  const parsed = await parseJsonBody(req, profileInputSchema, "Invalid profile");
+  if (!parsed.ok) return parsed.response;
 
   const existing = await getOrCreateProfile();
   const input = parsed.data;

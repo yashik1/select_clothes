@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getGarments, getImage, getOrCreateProfile } from "@/lib/db";
 import { providerStatus, renderTryOn, tryOnCategory } from "@/lib/tryon";
+import { parseJsonBody } from "@/lib/http";
 
 const schema = z.object({ garmentIds: z.array(z.string()).min(1).max(4) });
 
@@ -17,8 +18,8 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-  const parsed = schema.safeParse(await req.json());
-  if (!parsed.success) return NextResponse.json({ error: "Invalid request" }, { status: 400 });
+  const parsed = await parseJsonBody(req, schema);
+  if (!parsed.ok) return parsed.response;
 
   const status = providerStatus();
   if (status.id === "none" || !status.configured) {

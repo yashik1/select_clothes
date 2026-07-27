@@ -5,6 +5,7 @@ import { scoreOutfit, confidenceGaps } from "@/lib/engine";
 import { outfitClo, describeClo } from "@/lib/engine/weather";
 import { appContext } from "@/lib/server/context";
 import { occasionSchema } from "@/lib/validate";
+import { parseJsonBody } from "@/lib/http";
 
 const schema = z.object({
   garmentIds: z.array(z.string()).max(12),
@@ -13,10 +14,8 @@ const schema = z.object({
 
 /** Live scoring for the outfit studio. Called on every change, so it stays lean. */
 export async function POST(req: Request) {
-  const parsed = schema.safeParse(await req.json());
-  if (!parsed.success) {
-    return NextResponse.json({ error: "Invalid request" }, { status: 400 });
-  }
+  const parsed = await parseJsonBody(req, schema);
+  if (!parsed.ok) return parsed.response;
 
   const { profile, scoring, forecast } = await appContext(parsed.data.occasion);
   const garments = await getGarments(parsed.data.garmentIds);

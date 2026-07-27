@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { planPacking } from "@/lib/engine/packing";
 import { appContext } from "@/lib/server/context";
+import { parseJsonBody } from "@/lib/http";
 
 const schema = z.object({
   days: z.number().min(1).max(30),
@@ -18,10 +19,8 @@ const schema = z.object({
 });
 
 export async function POST(req: Request) {
-  const parsed = schema.safeParse(await req.json());
-  if (!parsed.success) {
-    return NextResponse.json({ error: "Invalid trip", issues: parsed.error.issues }, { status: 400 });
-  }
+  const parsed = await parseJsonBody(req, schema, "Invalid trip");
+  if (!parsed.ok) return parsed.response;
   const { profile, wardrobe, scoring } = await appContext();
   const result = planPacking(wardrobe, profile, parsed.data, scoring);
 

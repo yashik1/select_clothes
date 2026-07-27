@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { newId, nowIso, saveImage } from "@/lib/db";
+import { readFormBody } from "@/lib/http";
 
 const ALLOWED = new Set(["image/jpeg", "image/png", "image/webp"]);
 
@@ -11,9 +12,11 @@ const MAX_BYTES = 10 * 1024 * 1024;
  * upload, so what arrives here is already a sensible size.
  */
 export async function POST(req: Request) {
-  const form = await req.formData();
-  const file = form.get("file");
-  const kind = (form.get("kind") as string) || "garment";
+  const read = await readFormBody(req);
+  if (!read.ok) return read.response;
+
+  const file = read.data.get("file");
+  const kind = (read.data.get("kind") as string) || "garment";
 
   if (!(file instanceof File)) {
     return NextResponse.json({ error: "No file supplied." }, { status: 400 });
