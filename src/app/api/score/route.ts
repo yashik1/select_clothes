@@ -19,7 +19,7 @@ export async function POST(req: Request) {
   }
 
   const { profile, scoring, forecast } = await appContext(parsed.data.occasion);
-  const garments = getGarments(parsed.data.garmentIds);
+  const garments = await getGarments(parsed.data.garmentIds);
 
   if (!garments.length) {
     return NextResponse.json({ error: "No garments selected" }, { status: 400 });

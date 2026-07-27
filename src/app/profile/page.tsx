@@ -4,5 +4,5 @@ import { ProfileForm } from "@/components/ProfileForm";
 export const dynamic = "force-dynamic";
 
 export default async function ProfilePage() {
-  return <ProfileForm initial={getOrCreateProfile()} />;
+  return <ProfileForm initial={await getOrCreateProfile()} />;
 }

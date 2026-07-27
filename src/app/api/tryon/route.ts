@@ -1,24 +1,15 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { readFile } from "node:fs/promises";
-import path from "node:path";
-import { UPLOAD_DIR, getGarments, getImageRecord, getOrCreateProfile } from "@/lib/db";
+import { getGarments, getImage, getOrCreateProfile } from "@/lib/db";
 import { providerStatus, renderTryOn, tryOnCategory } from "@/lib/tryon";
 
 const schema = z.object({ garmentIds: z.array(z.string()).min(1).max(4) });
 
-/** Providers take URLs or data URLs; local files have to be inlined. */
+/** Providers take URLs or data URLs; our images are private, so they're inlined. */
 async function toDataUrl(imageId: string): Promise<string | null> {
-  const rec = getImageRecord(imageId);
-  if (!rec) return null;
-  const full = path.resolve(UPLOAD_DIR, rec.filename);
-  if (!full.startsWith(path.resolve(UPLOAD_DIR) + path.sep)) return null;
-  try {
-    const buf = await readFile(full);
-    return `data:${rec.mime};base64,${buf.toString("base64")}`;
-  } catch {
-    return null;
-  }
+  const image = await getImage(imageId);
+  if (!image) return null;
+  return `data:${image.mime};base64,${image.bytes.toString("base64")}`;
 }
 
 export async function GET() {
@@ -42,7 +33,7 @@ export async function POST(req: Request) {
     );
   }
 
-  const profile = getOrCreateProfile();
+  const profile = await getOrCreateProfile();
   const photoId = profile.bodyPhotoIds?.[0];
   if (!photoId) {
     return NextResponse.json(
@@ -53,12 +44,12 @@ export async function POST(req: Request) {
 
   const personImage = await toDataUrl(photoId);
   if (!personImage) {
-    return NextResponse.json({ ok: false, provider: status, error: "Your body photo is missing from disk." }, { status: 200 });
+    return NextResponse.json({ ok: false, provider: status, error: "Your body photo is missing." }, { status: 200 });
   }
 
   // Render base layers before outerwear, or the jacket gets painted over.
   const order = ["dress", "top", "bottom", "outerwear"];
-  const garments = getGarments(parsed.data.garmentIds)
+  const garments = (await getGarments(parsed.data.garmentIds))
     .filter((g) => order.includes(g.category) && g.imageIds.length)
     .sort((a, b) => order.indexOf(a.category) - order.indexOf(b.category));
 

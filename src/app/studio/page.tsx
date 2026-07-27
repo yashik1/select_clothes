@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 export default async function StudioPage() {
   return (
     <Suspense fallback={<p className="text-sm text-[var(--color-muted)]">Loading your wardrobe…</p>}>
-      <Studio wardrobe={listGarments()} />
+      <Studio wardrobe={await listGarments()} />
     </Suspense>
   );
 }

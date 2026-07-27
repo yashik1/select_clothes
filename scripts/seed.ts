@@ -6,13 +6,14 @@
  * a couple of items genuinely don't fit, because a demo where everything scores
  * 90 tells you nothing about whether the engine works.
  */
-import { newId, nowIso, saveGarment, saveProfile, logWear, getOrCreateProfile } from "../src/lib/db.ts";
+import {
+  newId, nowIso, saveGarment, saveProfile, logWear, getOrCreateProfile, listGarments, pool, ready,
+} from "../src/lib/db.ts";
 import type { Garment, Profile } from "../src/lib/types.ts";
 
 const now = nowIso();
 
-const profile: Profile = {
-  ...getOrCreateProfile(),
+const profileFields = {
   name: "Sam",
   unit: "cm",
   measurements: {
@@ -45,7 +46,7 @@ const profile: Profile = {
   bodyPhotoIds: [],
   createdAt: now,
   updatedAt: now,
-};
+} satisfies Partial<Profile>;
 
 type Seed = Omit<Garment, "id" | "createdAt" | "updatedAt" | "wearCount" | "lastWornAt" | "archivedAt">;
 
@@ -266,10 +267,35 @@ const items: Seed[] = [
   },
 ];
 
-function seed() {
-  saveProfile(profile);
+/**
+ * Wipes the wardrobe first, so re-running gives the same 21 items rather than
+ * a second copy of them. That is destructive, and DATABASE_URL may well be
+ * pointing at the deployed database — so an existing wardrobe has to be
+ * overwritten deliberately.
+ */
+async function reset(force: boolean) {
+  await ready();
+  const existing = await listGarments({ includeArchived: true });
+  if (existing.length && !force) {
+    console.error(
+      `Refusing to seed: this database already holds ${existing.length} garments.\n` +
+        `Re-run with --force to replace them.\n` +
+        `  DATABASE_URL=${(process.env.DATABASE_URL ?? "").replace(/:[^:@/]*@/, ":***@")}`,
+    );
+    process.exit(1);
+  }
+  await pool().query(
+    "TRUNCATE garment, wear_log, fit_feedback, brand_calibration, outfit, image, profile",
+  );
+}
 
-  const created: Garment[] = items.map((item) => {
+async function seed() {
+  await reset(process.argv.includes("--force"));
+
+  await saveProfile({ ...(await getOrCreateProfile()), ...profileFields });
+
+  const created: Garment[] = [];
+  for (const item of items) {
     const g: Garment = {
       ...item,
       id: newId(),
@@ -279,9 +305,9 @@ function seed() {
       createdAt: new Date(Date.now() - 200 * 86400000).toISOString(),
       updatedAt: now,
     };
-    saveGarment(g);
-    return g;
-  });
+    await saveGarment(g);
+    created.push(g);
+  }
 
   const find = (name: string) => created.find((g) => g.name === name)!;
 
@@ -301,7 +327,7 @@ function seed() {
   ];
 
   for (const [daysAgo, names] of history) {
-    logWear({
+    await logWear({
       id: newId(),
       date: new Date(Date.now() - daysAgo * 86400000).toISOString(),
       garmentIds: names.map((n) => find(n).id),
@@ -315,4 +341,10 @@ function seed() {
   console.log("Run `npm run dev` and open http://localhost:3000");
 }
 
-seed();
+seed()
+  .then(() => pool().end())
+  .catch(async (err) => {
+    console.error(err);
+    await pool().end().catch(() => {});
+    process.exit(1);
+  });

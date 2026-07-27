@@ -4,7 +4,7 @@ import { compact, profileInputSchema } from "@/lib/validate";
 import type { Profile } from "@/lib/types";
 
 export async function GET() {
-  return NextResponse.json({ profile: getOrCreateProfile() });
+  return NextResponse.json({ profile: await getOrCreateProfile() });
 }
 
 export async function PUT(req: Request) {
@@ -14,7 +14,7 @@ export async function PUT(req: Request) {
     return NextResponse.json({ error: "Invalid profile", issues: parsed.error.issues }, { status: 400 });
   }
 
-  const existing = getOrCreateProfile();
+  const existing = await getOrCreateProfile();
   const input = parsed.data;
 
   const profile: Profile = {
@@ -31,6 +31,6 @@ export async function PUT(req: Request) {
     createdAt: existing.createdAt,
   };
 
-  saveProfile(profile);
+  await saveProfile(profile);
   return NextResponse.json({ profile });
 }

@@ -34,7 +34,7 @@ export async function POST(req: Request) {
   const input = parsed.data;
   const now = nowIso();
 
-  logWear({
+  await logWear({
     id: newId(),
     date: input.date ?? now,
     garmentIds: input.garmentIds,
@@ -48,7 +48,7 @@ export async function POST(req: Request) {
   let calibrationsUpdated = 0;
   if (input.fitFeedback?.length) {
     for (const f of input.fitFeedback) {
-      saveFitFeedback({
+      await saveFitFeedback({
         id: newId(),
         garmentId: f.garmentId,
         landmark: f.landmark as never,
@@ -59,11 +59,11 @@ export async function POST(req: Request) {
     // Recompute from the full history rather than incrementally — the dataset
     // is tiny and this keeps the maths honest if a garment is later edited.
     const calibrations = computeCalibrations(
-      listFitFeedback(),
-      listGarments({ includeArchived: true }),
-      getOrCreateProfile(),
+      await listFitFeedback(),
+      await listGarments({ includeArchived: true }),
+      await getOrCreateProfile(),
     );
-    for (const c of calibrations) saveCalibration(c);
+    for (const c of calibrations) await saveCalibration(c);
     calibrationsUpdated = calibrations.length;
   }
 

@@ -4,7 +4,7 @@ import { compact, garmentInputSchema } from "@/lib/validate";
 import type { Garment } from "@/lib/types";
 
 export async function GET() {
-  return NextResponse.json({ garments: listGarments() });
+  return NextResponse.json({ garments: await listGarments() });
 }
 
 export async function POST(req: Request) {
@@ -30,6 +30,6 @@ export async function POST(req: Request) {
     updatedAt: now,
   };
 
-  saveGarment(garment);
+  await saveGarment(garment);
   return NextResponse.json({ garment }, { status: 201 });
 }

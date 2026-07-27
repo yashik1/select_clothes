@@ -16,8 +16,8 @@ export default async function WardrobePage({
   searchParams: Promise<{ category?: string; state?: string }>;
 }) {
   const params = await searchParams;
-  const profile = getOrCreateProfile();
-  const all = listGarments();
+  const profile = await getOrCreateProfile();
+  const all = await listGarments();
 
   const filtered = all.filter((g) => {
     if (params.category && g.category !== params.category) return false;

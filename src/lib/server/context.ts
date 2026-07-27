@@ -21,10 +21,14 @@ export interface AppContext {
  * to remember that scoring wants the wear log and the brand calibrations too.
  */
 export async function appContext(occasion?: OccasionKey): Promise<AppContext> {
-  const profile = getOrCreateProfile();
-  const wardrobe = listGarments();
-  const recentWear = listWearLogs(120);
-  const calibrations = listCalibrations();
+  // Independent reads — issue them together rather than serialising four
+  // round-trips now that the database is over a socket.
+  const [profile, wardrobe, recentWear, calibrations] = await Promise.all([
+    getOrCreateProfile(),
+    listGarments(),
+    listWearLogs(120),
+    listCalibrations(),
+  ]);
 
   const forecast =
     typeof profile.locationLat === "number" && typeof profile.locationLon === "number"

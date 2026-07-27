@@ -10,8 +10,8 @@ export const maxDuration = 60;
 
 export default async function InsightsPage() {
   const { profile, wardrobe } = await appContext();
-  const logs = listWearLogs(365);
-  const calibrations = listCalibrations();
+  const logs = await listWearLogs(365);
+  const calibrations = await listCalibrations();
 
   if (wardrobe.length < 3) {
     return (

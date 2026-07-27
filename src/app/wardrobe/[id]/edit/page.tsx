@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 
 export default async function EditGarmentPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const garment = getGarment(id);
+  const garment = await getGarment(id);
   if (!garment) notFound();
-  return <GarmentForm profile={getOrCreateProfile()} initial={garment} />;
+  return <GarmentForm profile={await getOrCreateProfile()} initial={garment} />;
 }

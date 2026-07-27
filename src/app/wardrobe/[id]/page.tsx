@@ -19,11 +19,11 @@ export const dynamic = "force-dynamic";
 
 export default async function GarmentPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const garment = getGarment(id);
+  const garment = await getGarment(id);
   if (!garment) notFound();
 
   const { profile, wardrobe, scoring } = await appContext();
-  const calibrations = listCalibrations();
+  const calibrations = await listCalibrations();
   const def = subcategoryDef(garment.subcategory, garment.category);
 
   const fit = evaluateGarmentFit(garment, profile, calibrations);

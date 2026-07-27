@@ -5,14 +5,14 @@ import type { Garment } from "@/lib/types";
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const garment = getGarment(id);
+  const garment = await getGarment(id);
   if (!garment) return NextResponse.json({ error: "Not found" }, { status: 404 });
   return NextResponse.json({ garment });
 }
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const existing = getGarment(id);
+  const existing = await getGarment(id);
   if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const body = await req.json();
@@ -26,7 +26,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       rating: body.rating ?? existing.rating,
       archivedAt: body.archivedAt !== undefined ? body.archivedAt : existing.archivedAt,
     };
-    saveGarment(updated);
+    await saveGarment(updated);
     return NextResponse.json({ garment: updated });
   }
 
@@ -45,12 +45,12 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     lastWornAt: existing.lastWornAt,
     createdAt: existing.createdAt,
   };
-  saveGarment(updated);
+  await saveGarment(updated);
   return NextResponse.json({ garment: updated });
 }
 
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  deleteGarment(id);
+  await deleteGarment(id);
   return NextResponse.json({ ok: true });
 }

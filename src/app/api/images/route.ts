@@ -1,19 +1,14 @@
 import { NextResponse } from "next/server";
-import { writeFile } from "node:fs/promises";
-import path from "node:path";
-import { UPLOAD_DIR, newId, nowIso, saveImageRecord } from "@/lib/db";
+import { newId, nowIso, saveImage } from "@/lib/db";
 
-const ALLOWED = new Map([
-  ["image/jpeg", "jpg"],
-  ["image/png", "png"],
-  ["image/webp", "webp"],
-]);
+const ALLOWED = new Set(["image/jpeg", "image/png", "image/webp"]);
 
 const MAX_BYTES = 10 * 1024 * 1024;
 
 /**
- * Images live on disk with only their metadata in SQLite. The client downscales
- * before upload, so what arrives here is already a sensible size.
+ * Image bytes go into Postgres alongside their metadata, so the app keeps no
+ * local state and needs no attached volume. The client downscales before
+ * upload, so what arrives here is already a sensible size.
  */
 export async function POST(req: Request) {
   const form = await req.formData();
@@ -23,8 +18,7 @@ export async function POST(req: Request) {
   if (!(file instanceof File)) {
     return NextResponse.json({ error: "No file supplied." }, { status: 400 });
   }
-  const ext = ALLOWED.get(file.type);
-  if (!ext) {
+  if (!ALLOWED.has(file.type)) {
     return NextResponse.json(
       { error: `Unsupported type ${file.type}. Use JPEG, PNG or WebP.` },
       { status: 415 },
@@ -35,10 +29,8 @@ export async function POST(req: Request) {
   }
 
   const id = newId();
-  const filename = `${id}.${ext}`;
-  const buffer = Buffer.from(await file.arrayBuffer());
-  await writeFile(path.join(UPLOAD_DIR, filename), buffer);
+  const bytes = Buffer.from(await file.arrayBuffer());
+  await saveImage({ id, mime: file.type, kind, createdAt: nowIso() }, bytes);
 
-  saveImageRecord({ id, mime: file.type, filename, kind, createdAt: nowIso() });
   return NextResponse.json({ id, url: `/api/images/${id}` }, { status: 201 });
 }
