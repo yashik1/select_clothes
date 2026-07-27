@@ -3,12 +3,13 @@ import { z } from "zod";
 import { getGarments, getImage, getOrCreateProfile } from "@/lib/db";
 import { providerStatus, renderTryOn, tryOnCategory } from "@/lib/tryon";
 import { parseJsonBody } from "@/lib/http";
+import { requireApiUser } from "@/lib/server/session";
 
 const schema = z.object({ garmentIds: z.array(z.string()).min(1).max(4) });
 
 /** Providers take URLs or data URLs; our images are private, so they're inlined. */
-async function toDataUrl(imageId: string): Promise<string | null> {
-  const image = await getImage(imageId);
+async function toDataUrl(userId: string, imageId: string): Promise<string | null> {
+  const image = await getImage(userId, imageId);
   if (!image) return null;
   return `data:${image.mime};base64,${image.bytes.toString("base64")}`;
 }
@@ -18,6 +19,10 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
+  const auth = await requireApiUser();
+  if (!auth.ok) return auth.response;
+  const userId = auth.user.id;
+
   const parsed = await parseJsonBody(req, schema);
   if (!parsed.ok) return parsed.response;
 
@@ -34,7 +39,7 @@ export async function POST(req: Request) {
     );
   }
 
-  const profile = await getOrCreateProfile();
+  const profile = await getOrCreateProfile(userId);
   const photoId = profile.bodyPhotoIds?.[0];
   if (!photoId) {
     return NextResponse.json(
@@ -43,14 +48,14 @@ export async function POST(req: Request) {
     );
   }
 
-  const personImage = await toDataUrl(photoId);
+  const personImage = await toDataUrl(userId, photoId);
   if (!personImage) {
     return NextResponse.json({ ok: false, provider: status, error: "Your body photo is missing." }, { status: 200 });
   }
 
   // Render base layers before outerwear, or the jacket gets painted over.
   const order = ["dress", "top", "bottom", "outerwear"];
-  const garments = (await getGarments(parsed.data.garmentIds))
+  const garments = (await getGarments(userId, parsed.data.garmentIds))
     .filter((g) => order.includes(g.category) && g.imageIds.length)
     .sort((a, b) => order.indexOf(a.category) - order.indexOf(b.category));
 
@@ -63,7 +68,7 @@ export async function POST(req: Request) {
 
   const layers: { image: string; category: ReturnType<typeof tryOnCategory> }[] = [];
   for (const g of garments) {
-    const img = await toDataUrl(g.imageIds[0]);
+    const img = await toDataUrl(userId, g.imageIds[0]);
     if (img) layers.push({ image: img, category: tryOnCategory(g.category) });
   }
 

@@ -1,13 +1,15 @@
 import Link from "next/link";
 import { analyseGaps } from "@/lib/engine/gaps";
 import { appContext } from "@/lib/server/context";
+import { requireUser } from "@/lib/server/session";
 import { Button, Card, Empty, SectionTitle, Swatch } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 export default async function GapsPage() {
-  const { profile, wardrobe, scoring } = await appContext();
+  const { id: userId } = await requireUser();
+  const { profile, wardrobe, scoring } = await appContext(userId);
 
   if (wardrobe.length < 4) {
     return (

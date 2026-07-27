@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import "./globals.css";
+import { currentUser } from "@/lib/server/session";
+import { AccountMenu } from "@/components/AccountMenu";
 
 export const metadata: Metadata = {
   title: "FitCheck — will this actually work?",
@@ -18,7 +20,11 @@ const NAV = [
   { href: "/profile", label: "You" },
 ];
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  // Signed out, every nav link would only bounce back to /login, so the header
+  // collapses to the wordmark and a way in.
+  const user = await currentUser();
+
   return (
     <html lang="en">
       <body className="min-h-screen">
@@ -27,23 +33,44 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <Link href="/" className="display text-lg font-semibold tracking-tight">
               Fit<span className="text-[var(--color-accent)]">Check</span>
             </Link>
-            <nav className="flex flex-1 flex-wrap items-center gap-1 text-sm">
-              {NAV.map((item) => (
+
+            {user ? (
+              <>
+                <nav className="flex flex-1 flex-wrap items-center gap-1 text-sm">
+                  {NAV.map((item) => (
+                    <Link
+                      key={item.href}
+                      href={item.href}
+                      className="rounded-md px-2.5 py-1.5 text-[var(--color-muted)] transition-colors hover:bg-[var(--color-raised)] hover:text-[var(--color-text)]"
+                    >
+                      {item.label}
+                    </Link>
+                  ))}
+                </nav>
                 <Link
-                  key={item.href}
-                  href={item.href}
-                  className="rounded-md px-2.5 py-1.5 text-[var(--color-muted)] transition-colors hover:bg-[var(--color-raised)] hover:text-[var(--color-text)]"
+                  href="/wardrobe/new"
+                  className="rounded-md bg-[var(--color-accent)] px-3 py-1.5 text-sm font-medium text-[var(--color-ink)] transition-opacity hover:opacity-90"
                 >
-                  {item.label}
+                  Add item
                 </Link>
-              ))}
-            </nav>
-            <Link
-              href="/wardrobe/new"
-              className="rounded-md bg-[var(--color-accent)] px-3 py-1.5 text-sm font-medium text-[var(--color-ink)] transition-opacity hover:opacity-90"
-            >
-              Add item
-            </Link>
+                <AccountMenu email={user.email} />
+              </>
+            ) : (
+              <div className="flex flex-1 justify-end gap-2">
+                <Link
+                  href="/login"
+                  className="rounded-md px-2.5 py-1.5 text-sm text-[var(--color-muted)] transition-colors hover:bg-[var(--color-raised)] hover:text-[var(--color-text)]"
+                >
+                  Sign in
+                </Link>
+                <Link
+                  href="/signup"
+                  className="rounded-md bg-[var(--color-accent)] px-3 py-1.5 text-sm font-medium text-[var(--color-ink)] transition-opacity hover:opacity-90"
+                >
+                  Create account
+                </Link>
+              </div>
+            )}
           </div>
         </header>
 

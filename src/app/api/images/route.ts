@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { newId, nowIso, saveImage } from "@/lib/db";
 import { readFormBody } from "@/lib/http";
+import { requireApiUser } from "@/lib/server/session";
 
 const ALLOWED = new Set(["image/jpeg", "image/png", "image/webp"]);
 
@@ -12,6 +13,10 @@ const MAX_BYTES = 10 * 1024 * 1024;
  * upload, so what arrives here is already a sensible size.
  */
 export async function POST(req: Request) {
+  const auth = await requireApiUser();
+  if (!auth.ok) return auth.response;
+  const userId = auth.user.id;
+
   const read = await readFormBody(req);
   if (!read.ok) return read.response;
 
@@ -33,7 +38,7 @@ export async function POST(req: Request) {
 
   const id = newId();
   const bytes = Buffer.from(await file.arrayBuffer());
-  await saveImage({ id, mime: file.type, kind, createdAt: nowIso() }, bytes);
+  await saveImage(userId, { id, mime: file.type, kind, createdAt: nowIso() }, bytes);
 
   return NextResponse.json({ id, url: `/api/images/${id}` }, { status: 201 });
 }

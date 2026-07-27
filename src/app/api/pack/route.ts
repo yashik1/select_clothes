@@ -3,6 +3,7 @@ import { z } from "zod";
 import { planPacking } from "@/lib/engine/packing";
 import { appContext } from "@/lib/server/context";
 import { parseJsonBody } from "@/lib/http";
+import { requireApiUser } from "@/lib/server/session";
 
 const schema = z.object({
   days: z.number().min(1).max(30),
@@ -19,9 +20,13 @@ const schema = z.object({
 });
 
 export async function POST(req: Request) {
+  const auth = await requireApiUser();
+  if (!auth.ok) return auth.response;
+  const userId = auth.user.id;
+
   const parsed = await parseJsonBody(req, schema, "Invalid trip");
   if (!parsed.ok) return parsed.response;
-  const { profile, wardrobe, scoring } = await appContext();
+  const { profile, wardrobe, scoring } = await appContext(userId);
   const result = planPacking(wardrobe, profile, parsed.data, scoring);
 
   return NextResponse.json({

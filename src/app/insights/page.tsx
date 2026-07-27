@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { listCalibrations, listWearLogs } from "@/lib/db";
+import { requireUser } from "@/lib/server/session";
 import { buildInsights, categoryLabel, type GarmentInsight } from "@/lib/engine/insights";
 import { describeCalibration } from "@/lib/engine/calibration";
 import { appContext } from "@/lib/server/context";
@@ -9,9 +10,10 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 export default async function InsightsPage() {
-  const { profile, wardrobe } = await appContext();
-  const logs = await listWearLogs(365);
-  const calibrations = await listCalibrations();
+  const { id: userId } = await requireUser();
+  const { profile, wardrobe } = await appContext(userId);
+  const logs = await listWearLogs(userId, 365);
+  const calibrations = await listCalibrations(userId);
 
   if (wardrobe.length < 3) {
     return (

@@ -6,9 +6,12 @@
  * a couple of items genuinely don't fit, because a demo where everything scores
  * 90 tells you nothing about whether the engine works.
  */
+import { randomBytes } from "node:crypto";
 import {
-  newId, nowIso, saveGarment, saveProfile, logWear, getOrCreateProfile, listGarments, pool, ready,
+  newId, nowIso, saveGarment, saveProfile, logWear, getOrCreateProfile, listGarments,
+  pool, ready, createUser, getUserByEmail,
 } from "../src/lib/db.ts";
+import { hashPassword, normaliseEmail } from "../src/lib/auth.ts";
 import type { Garment, Profile } from "../src/lib/types.ts";
 
 const now = nowIso();
@@ -268,31 +271,52 @@ const items: Seed[] = [
 ];
 
 /**
- * Wipes the wardrobe first, so re-running gives the same 21 items rather than
- * a second copy of them. That is destructive, and DATABASE_URL may well be
- * pointing at the deployed database — so an existing wardrobe has to be
- * overwritten deliberately.
+ * The wardrobe belongs to an account, so seeding needs one. An existing
+ * account is reused; a new one gets a random password unless FITCHECK_SEED_PASSWORD
+ * says otherwise, because a known default password on a deployed instance is
+ * an open front door.
  */
-async function reset(force: boolean) {
+async function seedAccount(): Promise<{ id: string; email: string; password: string | null }> {
   await ready();
-  const existing = await listGarments({ includeArchived: true });
+  const email = normaliseEmail(process.env.FITCHECK_SEED_EMAIL ?? "demo@fitcheck.local");
+
+  const existing = await getUserByEmail(email);
+  if (existing) return { id: existing.id, email, password: null };
+
+  const password = process.env.FITCHECK_SEED_PASSWORD ?? randomBytes(12).toString("base64url");
+  const user = await createUser(email, await hashPassword(password));
+  if (!user) throw new Error(`Could not create ${email}`);
+  return { id: user.id, email, password };
+}
+
+/**
+ * Wipes this account's wardrobe first, so re-running gives the same 21 items
+ * rather than a second copy of them. That is destructive, and DATABASE_URL may
+ * well be pointing at the deployed database — so an existing wardrobe has to be
+ * overwritten deliberately. Only this account's rows are touched; anyone else
+ * sharing the instance is left alone.
+ */
+async function reset(userId: string, force: boolean) {
+  const existing = await listGarments(userId, { includeArchived: true });
   if (existing.length && !force) {
     console.error(
-      `Refusing to seed: this database already holds ${existing.length} garments.\n` +
+      `Refusing to seed: this account already holds ${existing.length} garments.\n` +
         `Re-run with --force to replace them.\n` +
         `  DATABASE_URL=${(process.env.DATABASE_URL ?? "").replace(/:[^:@/]*@/, ":***@")}`,
     );
     process.exit(1);
   }
-  await pool().query(
-    "TRUNCATE garment, wear_log, fit_feedback, brand_calibration, outfit, image, profile",
-  );
+  for (const table of ["garment", "wear_log", "fit_feedback", "brand_calibration", "outfit", "image"]) {
+    await pool().query(`DELETE FROM ${table} WHERE user_id = $1`, [userId]);
+  }
 }
 
 async function seed() {
-  await reset(process.argv.includes("--force"));
+  const account = await seedAccount();
+  const userId = account.id;
+  await reset(userId, process.argv.includes("--force"));
 
-  await saveProfile({ ...(await getOrCreateProfile()), ...profileFields });
+  await saveProfile(userId, { ...(await getOrCreateProfile(userId)), ...profileFields });
 
   const created: Garment[] = [];
   for (const item of items) {
@@ -305,7 +329,7 @@ async function seed() {
       createdAt: new Date(Date.now() - 200 * 86400000).toISOString(),
       updatedAt: now,
     };
-    await saveGarment(g);
+    await saveGarment(userId, g);
     created.push(g);
   }
 
@@ -327,7 +351,7 @@ async function seed() {
   ];
 
   for (const [daysAgo, names] of history) {
-    await logWear({
+    await logWear(userId, {
       id: newId(),
       date: new Date(Date.now() - daysAgo * 86400000).toISOString(),
       garmentIds: names.map((n) => find(n).id),
@@ -338,7 +362,14 @@ async function seed() {
   }
 
   console.log(`Seeded ${created.length} garments, ${history.length} logged wears, and one profile.`);
-  console.log("Run `npm run dev` and open http://localhost:3000");
+  console.log(`\nSign in as  ${account.email}`);
+  if (account.password) {
+    console.log(`Password    ${account.password}`);
+    console.log("(shown once — set FITCHECK_SEED_PASSWORD to choose your own)");
+  } else {
+    console.log("(existing account — password unchanged)");
+  }
+  console.log("\nRun `npm run dev` and open http://localhost:3000");
 }
 
 seed()

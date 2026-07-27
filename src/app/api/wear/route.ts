@@ -7,6 +7,7 @@ import {
 import { computeCalibrations } from "@/lib/engine/calibration";
 import { occasionSchema } from "@/lib/validate";
 import { parseJsonBody } from "@/lib/http";
+import { requireApiUser } from "@/lib/server/session";
 
 const schema = z.object({
   garmentIds: z.array(z.string()).min(1),
@@ -28,12 +29,16 @@ const schema = z.object({
 });
 
 export async function POST(req: Request) {
+  const auth = await requireApiUser();
+  if (!auth.ok) return auth.response;
+  const userId = auth.user.id;
+
   const parsed = await parseJsonBody(req, schema);
   if (!parsed.ok) return parsed.response;
   const input = parsed.data;
   const now = nowIso();
 
-  await logWear({
+  await logWear(userId, {
     id: newId(),
     date: input.date ?? now,
     garmentIds: input.garmentIds,
@@ -47,7 +52,7 @@ export async function POST(req: Request) {
   let calibrationsUpdated = 0;
   if (input.fitFeedback?.length) {
     for (const f of input.fitFeedback) {
-      await saveFitFeedback({
+      await saveFitFeedback(userId, {
         id: newId(),
         garmentId: f.garmentId,
         landmark: f.landmark as never,
@@ -58,11 +63,11 @@ export async function POST(req: Request) {
     // Recompute from the full history rather than incrementally — the dataset
     // is tiny and this keeps the maths honest if a garment is later edited.
     const calibrations = computeCalibrations(
-      await listFitFeedback(),
-      await listGarments({ includeArchived: true }),
-      await getOrCreateProfile(),
+      await listFitFeedback(userId),
+      await listGarments(userId, { includeArchived: true }),
+      await getOrCreateProfile(userId),
     );
-    for (const c of calibrations) await saveCalibration(c);
+    for (const c of calibrations) await saveCalibration(userId, c);
     calibrationsUpdated = calibrations.length;
   }
 

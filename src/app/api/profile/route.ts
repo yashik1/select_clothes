@@ -2,17 +2,25 @@ import { NextResponse } from "next/server";
 import { getOrCreateProfile, saveProfile } from "@/lib/db";
 import { compact, profileInputSchema } from "@/lib/validate";
 import { parseJsonBody } from "@/lib/http";
+import { requireApiUser } from "@/lib/server/session";
 import type { Profile } from "@/lib/types";
 
 export async function GET() {
-  return NextResponse.json({ profile: await getOrCreateProfile() });
+  const auth = await requireApiUser();
+  if (!auth.ok) return auth.response;
+  const userId = auth.user.id;
+  return NextResponse.json({ profile: await getOrCreateProfile(userId) });
 }
 
 export async function PUT(req: Request) {
+  const auth = await requireApiUser();
+  if (!auth.ok) return auth.response;
+  const userId = auth.user.id;
+
   const parsed = await parseJsonBody(req, profileInputSchema, "Invalid profile");
   if (!parsed.ok) return parsed.response;
 
-  const existing = await getOrCreateProfile();
+  const existing = await getOrCreateProfile(userId);
   const input = parsed.data;
 
   const profile: Profile = {
@@ -29,6 +37,6 @@ export async function PUT(req: Request) {
     createdAt: existing.createdAt,
   };
 
-  await saveProfile(profile);
+  await saveProfile(userId, profile);
   return NextResponse.json({ profile });
 }

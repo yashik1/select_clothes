@@ -3,6 +3,7 @@ import { findOutfits } from "@/lib/engine/combos";
 import { OCCASIONS, OCCASION_KEYS, analyseProfile, SHAPE_LABEL } from "@/lib/engine";
 import { deriveSeason } from "@/lib/color/palette";
 import { appContext, profileReadiness } from "@/lib/server/context";
+import { requireUser } from "@/lib/server/session";
 import { OutfitCard } from "@/components/OutfitCard";
 import { Button, Card, Empty, Pill, SectionTitle } from "@/components/ui";
 import type { OccasionKey } from "@/lib/types";
@@ -19,7 +20,8 @@ export default async function Today({
     ? (params.occasion as OccasionKey)
     : "casual-social";
 
-  const { profile, wardrobe, forecast, scoring } = await appContext(occasion);
+  const { id: userId } = await requireUser();
+  const { profile, wardrobe, forecast, scoring } = await appContext(userId, occasion);
   const readiness = profileReadiness(profile);
   const body = analyseProfile(profile);
   const season = deriveSeason(profile.coloring);

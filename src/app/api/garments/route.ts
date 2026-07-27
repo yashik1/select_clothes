@@ -2,13 +2,21 @@ import { NextResponse } from "next/server";
 import { listGarments, newId, nowIso, saveGarment } from "@/lib/db";
 import { compact, garmentInputSchema } from "@/lib/validate";
 import { parseJsonBody } from "@/lib/http";
+import { requireApiUser } from "@/lib/server/session";
 import type { Garment } from "@/lib/types";
 
 export async function GET() {
-  return NextResponse.json({ garments: await listGarments() });
+  const auth = await requireApiUser();
+  if (!auth.ok) return auth.response;
+  const userId = auth.user.id;
+  return NextResponse.json({ garments: await listGarments(userId) });
 }
 
 export async function POST(req: Request) {
+  const auth = await requireApiUser();
+  if (!auth.ok) return auth.response;
+  const userId = auth.user.id;
+
   const parsed = await parseJsonBody(req, garmentInputSchema, "Invalid garment");
   if (!parsed.ok) return parsed.response;
 
@@ -25,6 +33,6 @@ export async function POST(req: Request) {
     updatedAt: now,
   };
 
-  await saveGarment(garment);
+  await saveGarment(userId, garment);
   return NextResponse.json({ garment }, { status: 201 });
 }

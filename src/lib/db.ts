@@ -94,6 +94,27 @@ export function pool(): Pool {
 /* ---------------------------------------------------------------- schema -- */
 
 const SCHEMA = `
+  CREATE TABLE IF NOT EXISTS app_user (
+    id            TEXT PRIMARY KEY,
+    email         TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    created_at    TEXT NOT NULL
+  );
+  -- Citext would be tidier, but it needs an extension the database user may
+  -- not be allowed to create. Emails are lowercased before they ever get here.
+  CREATE UNIQUE INDEX IF NOT EXISTS app_user_email ON app_user(email);
+
+  CREATE TABLE IF NOT EXISTS session (
+    token_hash TEXT PRIMARY KEY,
+    user_id    TEXT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+  -- Not "session_user": that is a reserved function name in Postgres, and an
+  -- index cannot be created with it.
+  CREATE INDEX IF NOT EXISTS session_user_id ON session(user_id);
+  CREATE INDEX IF NOT EXISTS session_expiry ON session(expires_at);
+
   CREATE TABLE IF NOT EXISTS profile (
     id          TEXT PRIMARY KEY,
     name        TEXT NOT NULL,
@@ -169,6 +190,40 @@ const SCHEMA = `
   );
 `;
 
+/**
+ * Everything a single-user database needs to become a multi-user one. Each
+ * statement is a no-op on a database created from SCHEMA above, so both paths
+ * converge and this can run unconditionally on every boot.
+ *
+ * user_id is deliberately nullable. Rows that predate accounts are invisible to
+ * every query — all of which filter on it — until the first account is created
+ * and adopts them, so upgrading an instance that already holds a wardrobe
+ * doesn't lose it. See `adoptOrphanedData`.
+ */
+const OWNERSHIP_MIGRATIONS = [
+  `ALTER TABLE profile           ADD COLUMN IF NOT EXISTS user_id TEXT`,
+  `ALTER TABLE garment           ADD COLUMN IF NOT EXISTS user_id TEXT`,
+  `ALTER TABLE outfit            ADD COLUMN IF NOT EXISTS user_id TEXT`,
+  `ALTER TABLE wear_log          ADD COLUMN IF NOT EXISTS user_id TEXT`,
+  `ALTER TABLE fit_feedback      ADD COLUMN IF NOT EXISTS user_id TEXT`,
+  `ALTER TABLE brand_calibration ADD COLUMN IF NOT EXISTS user_id TEXT`,
+  `ALTER TABLE image             ADD COLUMN IF NOT EXISTS user_id TEXT`,
+
+  `CREATE INDEX IF NOT EXISTS profile_user      ON profile(user_id)`,
+  `CREATE INDEX IF NOT EXISTS garment_user      ON garment(user_id)`,
+  `CREATE INDEX IF NOT EXISTS outfit_user       ON outfit(user_id)`,
+  `CREATE INDEX IF NOT EXISTS wear_log_user     ON wear_log(user_id)`,
+  `CREATE INDEX IF NOT EXISTS fit_feedback_user ON fit_feedback(user_id)`,
+  `CREATE INDEX IF NOT EXISTS image_user        ON image(user_id)`,
+
+  // A brand's bias is learned per person, so the key it upserts on has to
+  // include the owner. A unique index rather than a primary key, because it
+  // can be created idempotently and dropped without touching the old one.
+  `ALTER TABLE brand_calibration DROP CONSTRAINT IF EXISTS brand_calibration_pkey`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS brand_calibration_key
+     ON brand_calibration(user_id, brand, category)`,
+];
+
 /** Arbitrary but fixed — just has to be the same number in every instance. */
 const MIGRATION_LOCK = 0x71c8ec1;
 
@@ -179,6 +234,7 @@ async function migrate(): Promise<void> {
     await client.query("SELECT pg_advisory_lock($1)", [MIGRATION_LOCK]);
     try {
       await client.query(SCHEMA);
+      for (const statement of OWNERSHIP_MIGRATIONS) await client.query(statement);
     } finally {
       await client.query("SELECT pg_advisory_unlock($1)", [MIGRATION_LOCK]);
     }
@@ -216,12 +272,143 @@ async function one<T extends Row = Row>(text: string, params: unknown[] = []): P
 export const nowIso = () => new Date().toISOString();
 export const newId = () => globalThis.crypto.randomUUID();
 
+/* ----------------------------------------------------------- accounts -- */
+
+export interface AccountRow {
+  id: string;
+  email: string;
+  passwordHash: string;
+  createdAt: string;
+}
+
+export async function countUsers(): Promise<number> {
+  const row = await one("SELECT count(*)::int AS n FROM app_user");
+  return (row?.n as number) ?? 0;
+}
+
+export async function getUserByEmail(email: string): Promise<AccountRow | null> {
+  const r = await one("SELECT * FROM app_user WHERE email = $1", [email]);
+  return r
+    ? {
+        id: r.id as string,
+        email: r.email as string,
+        passwordHash: r.password_hash as string,
+        createdAt: r.created_at as string,
+      }
+    : null;
+}
+
+export async function getUserById(id: string): Promise<AccountRow | null> {
+  const r = await one("SELECT * FROM app_user WHERE id = $1", [id]);
+  return r
+    ? {
+        id: r.id as string,
+        email: r.email as string,
+        passwordHash: r.password_hash as string,
+        createdAt: r.created_at as string,
+      }
+    : null;
+}
+
+/** Returns null when the address is already taken, rather than throwing. */
+export async function createUser(
+  email: string,
+  passwordHash: string,
+): Promise<AccountRow | null> {
+  const id = newId();
+  const createdAt = nowIso();
+  const rows = await q(
+    `INSERT INTO app_user (id, email, password_hash, created_at)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (email) DO NOTHING
+     RETURNING id`,
+    [id, email, passwordHash, createdAt],
+  );
+  if (!rows.length) return null;
+  return { id, email, passwordHash, createdAt };
+}
+
+/**
+ * Hands data that predates accounts to its new owner. An instance upgraded from
+ * the single-user version has rows with no user_id, invisible to every query
+ * until this runs; the first account to be created takes them.
+ */
+export async function adoptOrphanedData(userId: string): Promise<number> {
+  await ready();
+  const client = await pool().connect();
+  let adopted = 0;
+  try {
+    await client.query("BEGIN");
+    for (const table of [
+      "profile", "garment", "outfit", "wear_log", "fit_feedback", "brand_calibration", "image",
+    ]) {
+      const res = await client.query(
+        `UPDATE ${table} SET user_id = $1 WHERE user_id IS NULL`,
+        [userId],
+      );
+      adopted += res.rowCount ?? 0;
+    }
+    // The old single-user profile was keyed on the literal id 'me'; the profile
+    // is now keyed on its owner.
+    await client.query(
+      `UPDATE profile SET id = $1 WHERE user_id = $1 AND id <> $1`,
+      [userId],
+    );
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+  return adopted;
+}
+
+/* ----------------------------------------------------------- sessions -- */
+
+export async function createSession(
+  tokenHash: string,
+  userId: string,
+  expiresAt: string,
+): Promise<void> {
+  await q(
+    `INSERT INTO session (token_hash, user_id, expires_at, created_at)
+     VALUES ($1, $2, $3, $4)`,
+    [tokenHash, userId, expiresAt, nowIso()],
+  );
+}
+
+/** The account behind a session token, or null if it's unknown or expired. */
+export async function userForSession(tokenHash: string): Promise<AccountRow | null> {
+  const r = await one(
+    `SELECT u.* FROM session s
+       JOIN app_user u ON u.id = s.user_id
+      WHERE s.token_hash = $1 AND s.expires_at > $2`,
+    [tokenHash, nowIso()],
+  );
+  return r
+    ? {
+        id: r.id as string,
+        email: r.email as string,
+        passwordHash: r.password_hash as string,
+        createdAt: r.created_at as string,
+      }
+    : null;
+}
+
+export async function deleteSession(tokenHash: string): Promise<void> {
+  await q("DELETE FROM session WHERE token_hash = $1", [tokenHash]);
+}
+
+/** Housekeeping: expired rows are dead weight and nothing else reads them. */
+export async function purgeExpiredSessions(): Promise<void> {
+  await q("DELETE FROM session WHERE expires_at <= $1", [nowIso()]);
+}
+
 /* --------------------------------------------------------------- profile -- */
 
-const DEFAULT_PROFILE_ID = "me";
-
-export async function getProfile(id = DEFAULT_PROFILE_ID): Promise<Profile | null> {
-  const row = await one("SELECT * FROM profile WHERE id = $1", [id]);
+export async function getProfile(userId: string): Promise<Profile | null> {
+  const row = await one("SELECT * FROM profile WHERE user_id = $1", [userId]);
   if (!row) return null;
   return {
     id: row.id as string,
@@ -233,7 +420,7 @@ export async function getProfile(id = DEFAULT_PROFILE_ID): Promise<Profile | nul
   } as Profile;
 }
 
-export function emptyProfile(id = DEFAULT_PROFILE_ID): Profile {
+export function emptyProfile(id: string): Profile {
   return {
     id,
     name: "Me",
@@ -247,23 +434,24 @@ export function emptyProfile(id = DEFAULT_PROFILE_ID): Profile {
   };
 }
 
-export async function saveProfile(profile: Profile): Promise<Profile> {
-  const { id, name, unit, createdAt, ...rest } = profile;
+export async function saveProfile(userId: string, profile: Profile): Promise<Profile> {
+  const { name, unit, createdAt, ...rest } = profile;
+  delete (rest as { id?: string }).id;
   const now = nowIso();
   await q(
-    `INSERT INTO profile (id, name, unit, data, created_at, updated_at)
-     VALUES ($1, $2, $3, $4::jsonb, $5, $6)
+    `INSERT INTO profile (id, user_id, name, unit, data, created_at, updated_at)
+     VALUES ($1, $1, $2, $3, $4::jsonb, $5, $6)
      ON CONFLICT (id) DO UPDATE SET
        name = EXCLUDED.name, unit = EXCLUDED.unit,
        data = EXCLUDED.data, updated_at = EXCLUDED.updated_at`,
-    [id, name, unit, JSON.stringify(rest), createdAt ?? now, now],
+    [userId, name, unit, JSON.stringify(rest), createdAt ?? now, now],
   );
-  return { ...profile, updatedAt: now };
+  return { ...profile, id: userId, updatedAt: now };
 }
 
 /** Always returns something, so pages never have to null-check the profile. */
-export async function getOrCreateProfile(): Promise<Profile> {
-  return (await getProfile()) ?? (await saveProfile(emptyProfile()));
+export async function getOrCreateProfile(userId: string): Promise<Profile> {
+  return (await getProfile(userId)) ?? (await saveProfile(userId, emptyProfile(userId)));
 }
 
 /* -------------------------------------------------------------- garments -- */
@@ -287,46 +475,52 @@ function rowToGarment(row: Row): Garment {
 }
 
 export async function listGarments(
+  userId: string,
   opts: { includeArchived?: boolean } = {},
 ): Promise<Garment[]> {
   const rows = await q(
     opts.includeArchived
-      ? "SELECT * FROM garment ORDER BY created_at DESC"
-      : "SELECT * FROM garment WHERE archived_at IS NULL ORDER BY created_at DESC",
+      ? "SELECT * FROM garment WHERE user_id = $1 ORDER BY created_at DESC"
+      : "SELECT * FROM garment WHERE user_id = $1 AND archived_at IS NULL ORDER BY created_at DESC",
+    [userId],
   );
   return rows.map(rowToGarment);
 }
 
-export async function getGarment(id: string): Promise<Garment | null> {
-  const row = await one("SELECT * FROM garment WHERE id = $1", [id]);
+export async function getGarment(userId: string, id: string): Promise<Garment | null> {
+  const row = await one("SELECT * FROM garment WHERE id = $1 AND user_id = $2", [id, userId]);
   return row ? rowToGarment(row) : null;
 }
 
-export async function getGarments(ids: string[]): Promise<Garment[]> {
+export async function getGarments(userId: string, ids: string[]): Promise<Garment[]> {
   if (!ids.length) return [];
-  const rows = await q("SELECT * FROM garment WHERE id = ANY($1::text[])", [ids]);
+  const rows = await q(
+    "SELECT * FROM garment WHERE user_id = $1 AND id = ANY($2::text[])",
+    [userId, ids],
+  );
   const byId = new Map(rows.map((r) => [r.id as string, rowToGarment(r)]));
   // Preserve the caller's ordering — outfit slot order is meaningful.
   return ids.map((id) => byId.get(id)).filter((x): x is Garment => Boolean(x));
 }
 
-export async function saveGarment(garment: Garment): Promise<Garment> {
+export async function saveGarment(userId: string, garment: Garment): Promise<Garment> {
   const {
     id, name, category, subcategory, brand, careState, formality,
     wearCount, lastWornAt, archivedAt, createdAt, ...rest
   } = garment;
   const now = nowIso();
   await q(
-    `INSERT INTO garment (id, name, category, subcategory, brand, care_state, formality,
+    `INSERT INTO garment (id, user_id, name, category, subcategory, brand, care_state, formality,
                           wear_count, last_worn_at, archived_at, data, created_at, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14)
      ON CONFLICT (id) DO UPDATE SET
        name = EXCLUDED.name, category = EXCLUDED.category, subcategory = EXCLUDED.subcategory,
        brand = EXCLUDED.brand, care_state = EXCLUDED.care_state, formality = EXCLUDED.formality,
        wear_count = EXCLUDED.wear_count, last_worn_at = EXCLUDED.last_worn_at,
-       archived_at = EXCLUDED.archived_at, data = EXCLUDED.data, updated_at = EXCLUDED.updated_at`,
+       archived_at = EXCLUDED.archived_at, data = EXCLUDED.data, updated_at = EXCLUDED.updated_at
+     WHERE garment.user_id = EXCLUDED.user_id`,
     [
-      id, name, category, subcategory, brand ?? null, careState, formality,
+      id, userId, name, category, subcategory, brand ?? null, careState, formality,
       wearCount, lastWornAt ?? null, archivedAt ?? null,
       JSON.stringify(rest), createdAt ?? now, now,
     ],
@@ -339,19 +533,30 @@ export async function saveGarment(garment: Garment): Promise<Garment> {
  * image bytes are rows rather than files, leaving them behind would quietly
  * grow the database forever.
  */
-export async function deleteGarment(id: string): Promise<void> {
+export async function deleteGarment(userId: string, id: string): Promise<boolean> {
   await ready();
   const client = await pool().connect();
   try {
     await client.query("BEGIN");
-    const { rows } = await client.query("SELECT data FROM garment WHERE id = $1", [id]);
+    const { rows } = await client.query(
+      "SELECT data FROM garment WHERE id = $1 AND user_id = $2",
+      [id, userId],
+    );
+    if (!rows.length) {
+      await client.query("ROLLBACK");
+      return false;
+    }
     const imageIds: string[] = (rows[0]?.data?.imageIds as string[]) ?? [];
-    await client.query("DELETE FROM garment WHERE id = $1", [id]);
-    await client.query("DELETE FROM fit_feedback WHERE garment_id = $1", [id]);
+    await client.query("DELETE FROM garment WHERE id = $1 AND user_id = $2", [id, userId]);
+    await client.query("DELETE FROM fit_feedback WHERE garment_id = $1 AND user_id = $2", [id, userId]);
     if (imageIds.length) {
-      await client.query("DELETE FROM image WHERE id = ANY($1::text[])", [imageIds]);
+      await client.query(
+        "DELETE FROM image WHERE id = ANY($1::text[]) AND user_id = $2",
+        [imageIds, userId],
+      );
     }
     await client.query("COMMIT");
+    return true;
   } catch (err) {
     await client.query("ROLLBACK").catch(() => {});
     throw err;
@@ -375,42 +580,49 @@ function rowToOutfit(row: Row): Outfit {
   } as Outfit;
 }
 
-export async function listOutfits(): Promise<Outfit[]> {
-  const rows = await q("SELECT * FROM outfit ORDER BY pinned DESC, updated_at DESC");
+export async function listOutfits(userId: string): Promise<Outfit[]> {
+  const rows = await q(
+    "SELECT * FROM outfit WHERE user_id = $1 ORDER BY pinned DESC, updated_at DESC",
+    [userId],
+  );
   return rows.map(rowToOutfit);
 }
 
-export async function getOutfit(id: string): Promise<Outfit | null> {
-  const row = await one("SELECT * FROM outfit WHERE id = $1", [id]);
+export async function getOutfit(userId: string, id: string): Promise<Outfit | null> {
+  const row = await one("SELECT * FROM outfit WHERE id = $1 AND user_id = $2", [id, userId]);
   return row ? rowToOutfit(row) : null;
 }
 
-export async function saveOutfit(outfit: Outfit): Promise<Outfit> {
+export async function saveOutfit(userId: string, outfit: Outfit): Promise<Outfit> {
   const { id, name, occasion, pinned, scoreSnapshot, createdAt, ...rest } = outfit;
   const now = nowIso();
   await q(
-    `INSERT INTO outfit (id, name, occasion, pinned, score, data, created_at, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8)
+    `INSERT INTO outfit (id, user_id, name, occasion, pinned, score, data, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9)
      ON CONFLICT (id) DO UPDATE SET
        name = EXCLUDED.name, occasion = EXCLUDED.occasion, pinned = EXCLUDED.pinned,
-       score = EXCLUDED.score, data = EXCLUDED.data, updated_at = EXCLUDED.updated_at`,
+       score = EXCLUDED.score, data = EXCLUDED.data, updated_at = EXCLUDED.updated_at
+     WHERE outfit.user_id = EXCLUDED.user_id`,
     [
-      id, name ?? null, occasion ?? null, Boolean(pinned), scoreSnapshot ?? null,
+      id, userId, name ?? null, occasion ?? null, Boolean(pinned), scoreSnapshot ?? null,
       JSON.stringify(rest), createdAt ?? now, now,
     ],
   );
   return { ...outfit, updatedAt: now };
 }
 
-export async function deleteOutfit(id: string): Promise<void> {
-  await q("DELETE FROM outfit WHERE id = $1", [id]);
+export async function deleteOutfit(userId: string, id: string): Promise<void> {
+  await q("DELETE FROM outfit WHERE id = $1 AND user_id = $2", [id, userId]);
 }
 
 /* -------------------------------------------------------------- wear log -- */
 
-export async function listWearLogs(sinceDays = 120): Promise<WearLog[]> {
+export async function listWearLogs(userId: string, sinceDays = 120): Promise<WearLog[]> {
   const cutoff = new Date(Date.now() - sinceDays * 86400000).toISOString();
-  const rows = await q("SELECT * FROM wear_log WHERE date >= $1 ORDER BY date DESC", [cutoff]);
+  const rows = await q(
+    "SELECT * FROM wear_log WHERE user_id = $1 AND date >= $2 ORDER BY date DESC",
+    [userId, cutoff],
+  );
   return rows.map((row) => ({
     id: row.id as string,
     date: row.date as string,
@@ -425,7 +637,7 @@ export async function listWearLogs(sinceDays = 120): Promise<WearLog[]> {
  * Records the wear and rolls the derived counters on each garment, in one
  * transaction — a half-applied wear would leave the rotation scores wrong.
  */
-export async function logWear(log: WearLog): Promise<WearLog> {
+export async function logWear(userId: string, log: WearLog): Promise<WearLog> {
   const { id, date, outfitId, occasion, createdAt, ...rest } = log;
   const now = nowIso();
   await ready();
@@ -433,9 +645,9 @@ export async function logWear(log: WearLog): Promise<WearLog> {
   try {
     await client.query("BEGIN");
     await client.query(
-      `INSERT INTO wear_log (id, date, outfit_id, occasion, data, created_at)
-       VALUES ($1, $2, $3, $4, $5::jsonb, $6)`,
-      [id, date, outfitId ?? null, occasion ?? null, JSON.stringify(rest), createdAt ?? now],
+      `INSERT INTO wear_log (id, user_id, date, outfit_id, occasion, data, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)`,
+      [id, userId, date, outfitId ?? null, occasion ?? null, JSON.stringify(rest), createdAt ?? now],
     );
     await client.query(
       `UPDATE garment
@@ -443,8 +655,8 @@ export async function logWear(log: WearLog): Promise<WearLog> {
               last_worn_at = CASE
                 WHEN last_worn_at IS NULL OR last_worn_at < $1 THEN $1 ELSE last_worn_at END,
               updated_at = $2
-        WHERE id = ANY($3::text[])`,
-      [date, now, log.garmentIds],
+        WHERE user_id = $3 AND id = ANY($4::text[])`,
+      [date, now, userId, log.garmentIds],
     );
     await client.query("COMMIT");
   } catch (err) {
@@ -456,14 +668,14 @@ export async function logWear(log: WearLog): Promise<WearLog> {
   return { ...log, createdAt: createdAt ?? now };
 }
 
-export async function deleteWearLog(id: string): Promise<void> {
-  await q("DELETE FROM wear_log WHERE id = $1", [id]);
+export async function deleteWearLog(userId: string, id: string): Promise<void> {
+  await q("DELETE FROM wear_log WHERE id = $1 AND user_id = $2", [id, userId]);
 }
 
 /* ----------------------------------------------------------- calibration -- */
 
-export async function listCalibrations(): Promise<BrandCalibration[]> {
-  const rows = await q("SELECT * FROM brand_calibration");
+export async function listCalibrations(userId: string): Promise<BrandCalibration[]> {
+  const rows = await q("SELECT * FROM brand_calibration WHERE user_id = $1", [userId]);
   return rows.map((r) => ({
     brand: r.brand as string,
     category: r.category as BrandCalibration["category"],
@@ -473,22 +685,22 @@ export async function listCalibrations(): Promise<BrandCalibration[]> {
   }));
 }
 
-export async function saveCalibration(c: BrandCalibration): Promise<void> {
+export async function saveCalibration(userId: string, c: BrandCalibration): Promise<void> {
   await q(
-    `INSERT INTO brand_calibration (brand, category, ease_bias_cm, sample_count, updated_at)
-     VALUES ($1, $2, $3, $4, $5)
-     ON CONFLICT (brand, category) DO UPDATE SET
+    `INSERT INTO brand_calibration (user_id, brand, category, ease_bias_cm, sample_count, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (user_id, brand, category) DO UPDATE SET
        ease_bias_cm = EXCLUDED.ease_bias_cm,
        sample_count = EXCLUDED.sample_count,
        updated_at = EXCLUDED.updated_at`,
-    [c.brand.trim().toLowerCase(), c.category, c.easeBiasCm, c.sampleCount, c.updatedAt],
+    [userId, c.brand.trim().toLowerCase(), c.category, c.easeBiasCm, c.sampleCount, c.updatedAt],
   );
 }
 
-export async function listFitFeedback(garmentId?: string): Promise<FitFeedback[]> {
+export async function listFitFeedback(userId: string, garmentId?: string): Promise<FitFeedback[]> {
   const rows = garmentId
-    ? await q("SELECT * FROM fit_feedback WHERE garment_id = $1", [garmentId])
-    : await q("SELECT * FROM fit_feedback");
+    ? await q("SELECT * FROM fit_feedback WHERE user_id = $1 AND garment_id = $2", [userId, garmentId])
+    : await q("SELECT * FROM fit_feedback WHERE user_id = $1", [userId]);
   return rows.map((r) => ({
     id: r.id as string,
     garmentId: r.garment_id as string,
@@ -498,10 +710,11 @@ export async function listFitFeedback(garmentId?: string): Promise<FitFeedback[]
   }));
 }
 
-export async function saveFitFeedback(f: FitFeedback): Promise<void> {
+export async function saveFitFeedback(userId: string, f: FitFeedback): Promise<void> {
   await q(
-    "INSERT INTO fit_feedback (id, garment_id, landmark, verdict, created_at) VALUES ($1, $2, $3, $4, $5)",
-    [f.id, f.garmentId, f.landmark, f.verdict, f.createdAt],
+    `INSERT INTO fit_feedback (id, user_id, garment_id, landmark, verdict, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [f.id, userId, f.garmentId, f.landmark, f.verdict, f.createdAt],
   );
 }
 
@@ -514,15 +727,18 @@ export interface ImageRecord {
   createdAt: string;
 }
 
-export async function saveImage(rec: ImageRecord, bytes: Buffer): Promise<void> {
+export async function saveImage(userId: string, rec: ImageRecord, bytes: Buffer): Promise<void> {
   await q(
-    "INSERT INTO image (id, mime, kind, bytes, created_at) VALUES ($1, $2, $3, $4, $5)",
-    [rec.id, rec.mime, rec.kind, bytes, rec.createdAt],
+    "INSERT INTO image (id, user_id, mime, kind, bytes, created_at) VALUES ($1, $2, $3, $4, $5, $6)",
+    [rec.id, userId, rec.mime, rec.kind, bytes, rec.createdAt],
   );
 }
 
-export async function getImageRecord(id: string): Promise<ImageRecord | null> {
-  const r = await one("SELECT id, mime, kind, created_at FROM image WHERE id = $1", [id]);
+export async function getImageRecord(userId: string, id: string): Promise<ImageRecord | null> {
+  const r = await one(
+    "SELECT id, mime, kind, created_at FROM image WHERE id = $1 AND user_id = $2",
+    [id, userId],
+  );
   if (!r) return null;
   return {
     id: r.id as string,
@@ -533,8 +749,11 @@ export async function getImageRecord(id: string): Promise<ImageRecord | null> {
 }
 
 /** Metadata and bytes together, for serving and for inlining into try-on calls. */
-export async function getImage(id: string): Promise<{ mime: string; bytes: Buffer } | null> {
-  const r = await one("SELECT mime, bytes FROM image WHERE id = $1", [id]);
+export async function getImage(
+  userId: string,
+  id: string,
+): Promise<{ mime: string; bytes: Buffer } | null> {
+  const r = await one("SELECT mime, bytes FROM image WHERE id = $1 AND user_id = $2", [id, userId]);
   if (!r) return null;
   return { mime: r.mime as string, bytes: r.bytes as Buffer };
 }

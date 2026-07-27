@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { listGarments } from "@/lib/db";
+import { requireUser } from "@/lib/server/session";
 import { getOrCreateProfile } from "@/lib/db";
 import { evaluateGarmentFit } from "@/lib/engine";
 import { categoryLabel } from "@/lib/engine/insights";
@@ -16,8 +17,9 @@ export default async function WardrobePage({
   searchParams: Promise<{ category?: string; state?: string }>;
 }) {
   const params = await searchParams;
-  const profile = await getOrCreateProfile();
-  const all = await listGarments();
+  const { id: userId } = await requireUser();
+  const profile = await getOrCreateProfile(userId);
+  const all = await listGarments(userId);
 
   const filtered = all.filter((g) => {
     if (params.category && g.category !== params.category) return false;

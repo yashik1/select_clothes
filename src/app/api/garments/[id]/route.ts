@@ -2,18 +2,26 @@ import { NextResponse } from "next/server";
 import { deleteGarment, getGarment, saveGarment } from "@/lib/db";
 import { compact, garmentInputSchema, garmentPatchSchema } from "@/lib/validate";
 import { readJsonBody } from "@/lib/http";
+import { requireApiUser } from "@/lib/server/session";
 import type { Garment } from "@/lib/types";
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const auth = await requireApiUser();
+  if (!auth.ok) return auth.response;
+
   const { id } = await params;
-  const garment = await getGarment(id);
+  const garment = await getGarment(auth.user.id, id);
   if (!garment) return NextResponse.json({ error: "Not found" }, { status: 404 });
   return NextResponse.json({ garment });
 }
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const auth = await requireApiUser();
+  if (!auth.ok) return auth.response;
+  const userId = auth.user.id;
+
   const { id } = await params;
-  const existing = await getGarment(id);
+  const existing = await getGarment(userId, id);
   if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const read = await readJsonBody(req);
@@ -39,7 +47,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       archivedAt:
         quick.data.archivedAt !== undefined ? quick.data.archivedAt : existing.archivedAt,
     };
-    await saveGarment(updated);
+    await saveGarment(userId, updated);
     return NextResponse.json({ garment: updated });
   }
 
@@ -58,12 +66,18 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     lastWornAt: existing.lastWornAt,
     createdAt: existing.createdAt,
   };
-  await saveGarment(updated);
+  await saveGarment(userId, updated);
   return NextResponse.json({ garment: updated });
 }
 
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const auth = await requireApiUser();
+  if (!auth.ok) return auth.response;
+
   const { id } = await params;
-  await deleteGarment(id);
+  // A garment belonging to someone else is reported exactly as one that never
+  // existed — anything else would confirm the id is real.
+  const deleted = await deleteGarment(auth.user.id, id);
+  if (!deleted) return NextResponse.json({ error: "Not found" }, { status: 404 });
   return NextResponse.json({ ok: true });
 }

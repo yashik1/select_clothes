@@ -11,6 +11,7 @@ import { describeColor } from "@/lib/color/space";
 import { describeClo, garmentClo } from "@/lib/engine/weather";
 import { formatDelta, formatLength } from "@/lib/units";
 import { appContext } from "@/lib/server/context";
+import { requireUser } from "@/lib/server/session";
 import { OutfitCard } from "@/components/OutfitCard";
 import { GarmentActions } from "@/components/GarmentActions";
 import { Card, ConfidenceBar, GarmentThumb, Pill, SectionTitle, Swatch } from "@/components/ui";
@@ -19,11 +20,12 @@ export const dynamic = "force-dynamic";
 
 export default async function GarmentPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const garment = await getGarment(id);
+  const { id: userId } = await requireUser();
+  const garment = await getGarment(userId, id);
   if (!garment) notFound();
 
-  const { profile, wardrobe, scoring } = await appContext();
-  const calibrations = await listCalibrations();
+  const { profile, wardrobe, scoring } = await appContext(userId);
+  const calibrations = await listCalibrations(userId);
   const def = subcategoryDef(garment.subcategory, garment.category);
 
   const fit = evaluateGarmentFit(garment, profile, calibrations);

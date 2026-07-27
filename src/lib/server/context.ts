@@ -20,14 +20,14 @@ export interface AppContext {
  * Assembles everything the engines need in one place, so no page or route has
  * to remember that scoring wants the wear log and the brand calibrations too.
  */
-export async function appContext(occasion?: OccasionKey): Promise<AppContext> {
+export async function appContext(userId: string, occasion?: OccasionKey): Promise<AppContext> {
   // Independent reads — issue them together rather than serialising four
   // round-trips now that the database is over a socket.
   const [profile, wardrobe, recentWear, calibrations] = await Promise.all([
-    getOrCreateProfile(),
-    listGarments(),
-    listWearLogs(120),
-    listCalibrations(),
+    getOrCreateProfile(userId),
+    listGarments(userId),
+    listWearLogs(userId, 120),
+    listCalibrations(userId),
   ]);
 
   const forecast =
