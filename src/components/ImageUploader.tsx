@@ -1,9 +1,26 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { deltaE2000, labToRgb, rgbToHex, rgbToLab, type Lab } from "@/lib/color/space";
 
 const MAX_EDGE = 1400;
+
+/** Draws a source into a canvas no larger than MAX_EDGE, preserving aspect. */
+function fitToCanvas(
+  source: CanvasImageSource,
+  width: number,
+  height: number,
+): HTMLCanvasElement {
+  const scale = Math.min(1, MAX_EDGE / Math.max(width, height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(width * scale);
+  canvas.height = Math.round(height * scale);
+  canvas.getContext("2d")!.drawImage(source, 0, 0, canvas.width, canvas.height);
+  return canvas;
+}
+
+const toBlob = (canvas: HTMLCanvasElement) =>
+  new Promise<Blob>((resolve) => canvas.toBlob((b) => resolve(b!), "image/jpeg", 0.88));
 
 /**
  * Downscale in the browser before upload. A modern phone photo is 4-8MB; the
@@ -12,21 +29,9 @@ const MAX_EDGE = 1400;
  */
 async function downscale(file: File): Promise<{ blob: Blob; canvas: HTMLCanvasElement }> {
   const bitmap = await createImageBitmap(file);
-  const scale = Math.min(1, MAX_EDGE / Math.max(bitmap.width, bitmap.height));
-  const w = Math.round(bitmap.width * scale);
-  const h = Math.round(bitmap.height * scale);
-
-  const canvas = document.createElement("canvas");
-  canvas.width = w;
-  canvas.height = h;
-  const ctx = canvas.getContext("2d")!;
-  ctx.drawImage(bitmap, 0, 0, w, h);
+  const canvas = fitToCanvas(bitmap, bitmap.width, bitmap.height);
   bitmap.close();
-
-  const blob = await new Promise<Blob>((resolve) =>
-    canvas.toBlob((b) => resolve(b!), "image/jpeg", 0.88),
-  );
-  return { blob, canvas };
+  return { blob: await toBlob(canvas), canvas };
 }
 
 /**
@@ -141,6 +146,169 @@ const median = (xs: number[]) => {
   return s[Math.floor(s.length / 2)];
 };
 
+/* ---------------------------------------------------------------- camera -- */
+
+function cameraProblem(err: unknown): string {
+  const name = err instanceof DOMException ? err.name : "";
+  if (name === "NotAllowedError" || name === "SecurityError") {
+    return "Camera access was blocked. Allow it for this site in your browser settings, or choose a file instead.";
+  }
+  if (name === "NotFoundError" || name === "OverconstrainedError") {
+    return "No camera found on this device.";
+  }
+  if (name === "NotReadableError") {
+    return "The camera is already in use by another app.";
+  }
+  return "Couldn't start the camera. Choose a file instead.";
+}
+
+/**
+ * A full-screen viewfinder. Full-screen because framing a whole garment on a
+ * phone through a thumbnail-sized preview is miserable, and this is the moment
+ * the photo is either square-on and evenly lit or it isn't.
+ */
+function CameraCapture({
+  onCapture,
+  onClose,
+}: {
+  onCapture: (canvas: HTMLCanvasElement) => void;
+  onClose: () => void;
+}) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const [facing, setFacing] = useState<"environment" | "user">("environment");
+  const [error, setError] = useState<string | null>(null);
+  const [ready, setReady] = useState(false);
+  const [manyCameras, setManyCameras] = useState(false);
+
+  const stop = useCallback(() => {
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      stop();
+      setReady(false);
+      setError(null);
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          // `ideal` rather than `exact`: a laptop has no environment-facing
+          // camera and an exact constraint would fail outright instead of
+          // falling back to the one camera it does have.
+          video: { facingMode: { ideal: facing }, width: { ideal: 1920 }, height: { ideal: 1440 } },
+          audio: false,
+        });
+        if (cancelled) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+        streamRef.current = stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          await videoRef.current.play().catch(() => {});
+        }
+        setReady(true);
+
+        // Device labels are only populated once permission is granted, which
+        // is why this runs after the stream opens rather than before it.
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        if (!cancelled) setManyCameras(devices.filter((d) => d.kind === "videoinput").length > 1);
+      } catch (err) {
+        if (!cancelled) setError(cameraProblem(err));
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      stop();
+    };
+  }, [facing, stop]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  function shoot() {
+    const video = videoRef.current;
+    if (!video?.videoWidth) return;
+    onCapture(fitToCanvas(video, video.videoWidth, video.videoHeight));
+  }
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Take a photo"
+      className="fixed inset-0 z-50 flex flex-col bg-black"
+    >
+      <div className="relative flex-1 overflow-hidden">
+        <video
+          ref={videoRef}
+          playsInline
+          muted
+          autoPlay
+          className="h-full w-full object-contain"
+          // Framing yourself in an unmirrored preview is disorienting, so the
+          // front camera is flipped for display. The captured frame is not,
+          // because that is what the lens actually saw.
+          style={{ transform: facing === "user" ? "scaleX(-1)" : undefined }}
+        />
+
+        {!ready && !error && (
+          <p className="absolute inset-0 flex items-center justify-center text-sm text-white/70">
+            Starting the camera…
+          </p>
+        )}
+
+        {error && (
+          <div className="absolute inset-0 flex items-center justify-center p-8">
+            <p className="max-w-xs text-center text-sm leading-relaxed text-white/80">{error}</p>
+          </div>
+        )}
+      </div>
+
+      <div className="flex items-center justify-between gap-4 px-6 py-5">
+        <button
+          type="button"
+          onClick={onClose}
+          className="min-w-20 text-left text-sm text-white/80 hover:text-white"
+        >
+          Cancel
+        </button>
+
+        <button
+          type="button"
+          onClick={shoot}
+          disabled={!ready}
+          aria-label="Take photo"
+          className="h-16 w-16 rounded-full border-4 border-white/90 bg-white/20 transition-transform active:scale-95 disabled:opacity-40"
+        />
+
+        <div className="min-w-20 text-right">
+          {manyCameras && (
+            <button
+              type="button"
+              onClick={() => setFacing((f) => (f === "environment" ? "user" : "environment"))}
+              className="text-sm text-white/80 hover:text-white"
+            >
+              Flip
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------- uploader -- */
+
 export function ImageUploader({
   imageIds,
   onChange,
@@ -158,8 +326,40 @@ export function ImageUploader({
   max?: number;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [liveCamera, setLiveCamera] = useState(false);
+
+  // Decided after mount, not during render: `navigator` doesn't exist on the
+  // server, and getUserMedia is absent outside a secure context — which is
+  // every plain-HTTP deployment.
+  useEffect(() => {
+    setLiveCamera(Boolean(navigator.mediaDevices?.getUserMedia) && window.isSecureContext);
+  }, []);
+
+  /** One place where a photo becomes a stored image, whatever produced it. */
+  const uploadCanvas = useCallback(
+    async (canvas: HTMLCanvasElement, blob: Blob, ids: string[]): Promise<string> => {
+      if (onColors && ids.length === 0) {
+        const colors = extractColors(canvas);
+        if (colors.length) onColors(colors);
+      }
+
+      const form = new FormData();
+      form.append("file", new File([blob], "photo.jpg", { type: "image/jpeg" }));
+      form.append("kind", kind);
+
+      const res = await fetch("/api/images", { method: "POST", body: form });
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        throw new Error(json.error ?? "Upload failed");
+      }
+      return (await res.json()).id as string;
+    },
+    [kind, onColors],
+  );
 
   async function handleFiles(files: FileList | null) {
     if (!files?.length) return;
@@ -170,31 +370,40 @@ export function ImageUploader({
     try {
       for (const file of Array.from(files).slice(0, max - imageIds.length)) {
         const { blob, canvas } = await downscale(file);
-
-        if (onColors && next.length === 0) {
-          const colors = extractColors(canvas);
-          if (colors.length) onColors(colors);
-        }
-
-        const form = new FormData();
-        form.append("file", new File([blob], "photo.jpg", { type: "image/jpeg" }));
-        form.append("kind", kind);
-
-        const res = await fetch("/api/images", { method: "POST", body: form });
-        if (!res.ok) {
-          const json = await res.json().catch(() => ({}));
-          throw new Error(json.error ?? "Upload failed");
-        }
-        const { id } = await res.json();
-        next.push(id);
+        next.push(await uploadCanvas(canvas, blob, next));
       }
       onChange(next);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Upload failed");
     } finally {
       setBusy(false);
+      // Both are cleared: picking the same file twice in a row fires no change
+      // event otherwise, so a re-take would silently do nothing.
       if (inputRef.current) inputRef.current.value = "";
+      if (fileInputRef.current) fileInputRef.current.value = "";
     }
+  }
+
+  async function handleCapture(canvas: HTMLCanvasElement) {
+    setCameraOpen(false);
+    setBusy(true);
+    setError(null);
+    try {
+      const next = [...imageIds];
+      next.push(await uploadCanvas(canvas, await toBlob(canvas), next));
+      onChange(next);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Upload failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function openCamera() {
+    // Where getUserMedia isn't available, the capture attribute still opens the
+    // phone's own camera app — which is the case that matters most.
+    if (liveCamera) setCameraOpen(true);
+    else inputRef.current?.click();
   }
 
   return (
@@ -215,19 +424,49 @@ export function ImageUploader({
         ))}
 
         {imageIds.length < max && (
-          <button
-            type="button"
-            onClick={() => inputRef.current?.click()}
-            disabled={busy}
-            className="flex h-28 w-24 flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-[var(--color-line)] text-xs text-[var(--color-muted)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:opacity-50"
-          >
-            {busy ? "Uploading…" : (<><span className="text-lg leading-none">+</span><span>Add photo</span></>)}
-          </button>
+          <>
+            <button
+              type="button"
+              onClick={openCamera}
+              disabled={busy}
+              className="flex h-28 w-24 flex-col items-center justify-center gap-1.5 rounded-lg border border-dashed border-[var(--color-line)] text-xs text-[var(--color-muted)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:opacity-50"
+            >
+              {busy ? (
+                "Uploading…"
+              ) : (
+                <>
+                  <CameraIcon />
+                  <span>Take photo</span>
+                </>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={busy}
+              className="flex h-28 w-24 flex-col items-center justify-center gap-1.5 rounded-lg border border-dashed border-[var(--color-line)] text-xs text-[var(--color-muted)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:opacity-50"
+            >
+              <span className="text-lg leading-none">+</span>
+              <span>Choose file</span>
+            </button>
+          </>
         )}
       </div>
 
+      {/* The camera fallback: on a phone without getUserMedia this still opens
+          the native camera rather than the photo library. */}
       <input
         ref={inputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="hidden"
+        onChange={(e) => handleFiles(e.target.files)}
+      />
+
+      <input
+        ref={fileInputRef}
         type="file"
         accept="image/jpeg,image/png,image/webp"
         multiple={max > 1}
@@ -237,6 +476,19 @@ export function ImageUploader({
 
       {hint && <p className="mt-2 text-xs text-[var(--color-faint)]">{hint}</p>}
       {error && <p className="mt-2 text-xs text-[var(--color-bad)]">{error}</p>}
+
+      {cameraOpen && (
+        <CameraCapture onCapture={handleCapture} onClose={() => setCameraOpen(false)} />
+      )}
     </div>
+  );
+}
+
+function CameraIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
+      <path d="M3 8.5A1.5 1.5 0 0 1 4.5 7h2.2a1 1 0 0 0 .83-.45l.94-1.4A1 1 0 0 1 9.3 4.7h5.4a1 1 0 0 1 .83.45l.94 1.4a1 1 0 0 0 .83.45h2.2A1.5 1.5 0 0 1 21 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z" />
+      <circle cx="12" cy="13" r="3.4" />
+    </svg>
   );
 }
