@@ -16,9 +16,18 @@ export async function GET() {
     await pool().query("SELECT 1");
     return NextResponse.json({ ok: true, db: "up", ms: Date.now() - started });
   } catch (err) {
-    return NextResponse.json(
-      { ok: false, db: "down", error: err instanceof Error ? err.message : String(err) },
-      { status: 503 },
-    );
+    const message = err instanceof Error ? err.message : String(err);
+    // A failing healthcheck is reported by the platform as nothing more than
+    // "healthcheck failed", and the response body never reaches the deploy log.
+    // Print the reason where someone staring at the logs will actually see it.
+    console.error(`[health] database unreachable: ${message}`);
+    if (!process.env.DATABASE_URL && !process.env.POSTGRES_URL) {
+      console.error(
+        "[health] DATABASE_URL is not set on this service. Add a Postgres " +
+          "service and set DATABASE_URL=${{Postgres.DATABASE_URL}} — as a " +
+          "variable reference, not a pasted value.",
+      );
+    }
+    return NextResponse.json({ ok: false, db: "down", error: message }, { status: 503 });
   }
 }
