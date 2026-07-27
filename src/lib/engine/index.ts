@@ -218,7 +218,22 @@ function headlineFor(
   const strongest = ranked[ranked.length - 1];
 
   if (verdict === "wear-it") {
-    if (total >= 88) return `Wear it. ${strongest.label} is doing real work here.`;
+    /*
+     * Naming the winning dimension gives every outfit that happens to score
+     * well on formality the identical sentence, which on a page of four
+     * suggestions reads as a template rather than a judgement. The dimension's
+     * own best reason is about these specific garments, so prefer it; the card
+     * drops it from the list underneath so nothing is said twice.
+     */
+    const specific = strongest.reasons.find((r) => r.severity === "good" && r.text.length < 110);
+    if (specific) return `Wear it. ${specific.text}`;
+
+    // Failing that, two dimensions instead of one — thirty pairings rather
+    // than six lines.
+    const second = ranked[ranked.length - 2];
+    if (total >= 88 && second) {
+      return `Wear it. ${strongest.label} is doing real work, and ${second.label.toLowerCase()} backs it up.`;
+    }
     return `Wear it — ${strongest.label.toLowerCase()} is strong and nothing is fighting it.`;
   }
   if (verdict === "close") {
@@ -232,6 +247,43 @@ function headlineFor(
 }
 
 /* ------------------------------------------------------------ formatting -- */
+
+const LEAD: Record<Verdict, string> = {
+  "wear-it": "Wear it.",
+  close: "Almost.",
+  skip: "Skip it.",
+};
+
+/** Every sentence an outfit could lead with, best first. */
+export function headlineOptions(score: OutfitScore): string[] {
+  const lead = LEAD[score.verdict];
+  const ranked = [...score.dimensions].sort((a, b) => b.score - a.score);
+
+  const options = [score.headline];
+  for (const d of ranked) {
+    for (const r of d.reasons) {
+      if (r.severity === "good" && r.text.length < 120) options.push(`${lead} ${r.text}`);
+    }
+  }
+  return [...new Set(options)];
+}
+
+/**
+ * Gives each suggestion in a list a line no other suggestion has used.
+ *
+ * A single outfit's headline is the best thing that can be said about it, but
+ * four outfits scored on the same wardrobe often share a strongest dimension —
+ * and four identical sentences read as a template rather than four judgements.
+ * No individual score can know that; only the list can.
+ */
+export function distinctHeadlines(scores: OutfitScore[]): string[] {
+  const used = new Set<string>();
+  return scores.map((score) => {
+    const choice = headlineOptions(score).find((h) => !used.has(h)) ?? score.headline;
+    used.add(choice);
+    return choice;
+  });
+}
 
 export const VERDICT_COPY: Record<Verdict, { label: string; tone: string }> = {
   "wear-it": { label: "Wear it", tone: "good" },

@@ -1,23 +1,37 @@
 @import "tailwindcss";
 
 @theme {
-  --color-ink: #0d0e11;
-  --color-surface: #14161b;
-  --color-raised: #1b1e25;
-  --color-line: #272b34;
-  --color-line-soft: #1f232a;
+  /* Surfaces climb in steps you can actually see. The old palette moved a
+     couple of points per level, which is why every card read as the same
+     grey rectangle as the page behind it. */
+  --color-ink: #08090d;
+  --color-surface: #12141c;
+  --color-raised: #1a1d28;
+  --color-line: #2b3142;
+  --color-line-soft: #1f2431;
 
-  --color-text: #e9eaee;
-  --color-muted: #9aa1ae;
-  --color-faint: #6b7280;
+  --color-text: #edeff5;
+  --color-muted: #98a1b5;
+  --color-faint: #6a7386;
 
-  --color-accent: #c8a76a;
-  --color-accent-soft: #3a3218;
+  --color-accent: #f0c674;
+  --color-accent-deep: #c99a45;
+  --color-accent-soft: #3a2f18;
 
-  --color-good: #5fbf8a;
-  --color-warn: #e0b055;
-  --color-bad: #e0705f;
-  --color-info: #7aa7d9;
+  --color-good: #4ade80;
+  --color-warn: #fbbf24;
+  --color-bad: #f87171;
+  --color-info: #60a5fa;
+
+  /* One hue per scored dimension. Six identical grey bars told you nothing at
+     a glance; six coloured ones make the shape of a score readable before you
+     have read a single number, and the colour means something. */
+  --color-dim-fit: #a78bfa;
+  --color-dim-color: #f472b6;
+  --color-dim-proportion: #22d3ee;
+  --color-dim-formality: #fbbf24;
+  --color-dim-weather: #60a5fa;
+  --color-dim-novelty: #4ade80;
 
   --font-display: ui-serif, Georgia, "Times New Roman", serif;
 }
@@ -30,6 +44,21 @@ body {
   background: var(--color-ink);
   color: var(--color-text);
   -webkit-font-smoothing: antialiased;
+  position: relative;
+}
+
+/* An ambient wash so the page is a lit room rather than a void. Fixed and
+   inert, behind everything. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(60rem 40rem at 12% -10%, rgba(167, 139, 250, 0.1), transparent 60%),
+    radial-gradient(50rem 34rem at 92% 4%, rgba(240, 198, 116, 0.08), transparent 62%),
+    radial-gradient(46rem 46rem at 50% 108%, rgba(34, 211, 238, 0.06), transparent 60%);
 }
 
 /* Numbers in tables and measurement fields must line up. */
@@ -39,25 +68,64 @@ body {
 
 .display {
   font-family: var(--font-display);
-  letter-spacing: -0.015em;
+  letter-spacing: -0.02em;
 }
 
-/* Inputs: styled once here rather than repeating a dozen utility classes on
-   every field in the measurement forms. */
+/* --------------------------------------------------------------- motion -- */
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes sweep {
+  from {
+    stroke-dashoffset: var(--sweep-from);
+  }
+}
+
+@keyframes glow-pulse {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 0.9; }
+}
+
+/* Content arrives rather than appearing. `--delay` staggers a list so the eye
+   is led down it instead of being handed everything at once. */
+.rise {
+  animation: rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: var(--delay, 0ms);
+}
+
+/* --------------------------------------------------------------- inputs -- */
+
 input[type="text"],
 input[type="number"],
 input[type="date"],
+input[type="email"],
+input[type="password"],
 input[type="search"],
 select,
 textarea {
   background: var(--color-raised);
   border: 1px solid var(--color-line);
-  border-radius: 0.5rem;
-  padding: 0.5rem 0.7rem;
+  border-radius: 0.6rem;
+  padding: 0.55rem 0.75rem;
   color: var(--color-text);
   font-size: 0.875rem;
   width: 100%;
-  transition: border-color 0.15s ease;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+input:hover,
+select:hover,
+textarea:hover {
+  border-color: color-mix(in srgb, var(--color-line) 60%, var(--color-muted));
 }
 
 input:focus,
@@ -65,12 +133,14 @@ select:focus,
 textarea:focus {
   outline: none;
   border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 18%, transparent);
+  background: color-mix(in srgb, var(--color-raised) 88%, var(--color-accent));
 }
 
 input[type="color"] {
   background: transparent;
   border: 1px solid var(--color-line);
-  border-radius: 0.5rem;
+  border-radius: 0.6rem;
   height: 2.4rem;
   width: 100%;
   padding: 2px;
@@ -90,16 +160,24 @@ label {
   color: var(--color-faint);
 }
 
+::selection {
+  background: color-mix(in srgb, var(--color-accent) 30%, transparent);
+}
+
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
 }
 ::-webkit-scrollbar-track {
-  background: var(--color-ink);
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
   background: var(--color-line);
   border-radius: 5px;
+  border: 2px solid var(--color-ink);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-faint);
 }
 
 @media (prefers-reduced-motion: reduce) {

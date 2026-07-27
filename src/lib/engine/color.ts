@@ -189,9 +189,18 @@ export function scoreColor(garments: Garment[], profile: Profile): SubScore {
         impact: -14,
       });
     } else if (worst && worst.score >= 80) {
+      // Two navies a few ΔE apart get the same name, and "deep muted blue and
+      // deep muted blue form a monochrome pairing" reads like a bug. When the
+      // names collide, say what is actually true: they're two shades of one
+      // colour, which is the whole point of a monochrome pairing anyway.
+      const a = describeColor(worst.a.hex);
+      const b = describeColor(worst.b.hex);
       reasons.push({
         severity: "good",
-        text: `${describeColor(worst.a.hex)} and ${describeColor(worst.b.hex)} form a ${worst.kind} pairing.`,
+        text:
+          a === b
+            ? `Two shades of ${a} — a ${worst.kind} pairing that reads as deliberate.`
+            : `${a} and ${b} form a ${worst.kind} pairing.`,
         impact: 5,
       });
     }

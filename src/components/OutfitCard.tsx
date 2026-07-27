@@ -13,26 +13,42 @@ export function OutfitCard({
   score,
   href,
   compact = false,
+  rank,
+  delay,
+  headline,
 }: {
   garments: Garment[];
   score: ScoreResult;
   href?: string;
   compact?: boolean;
+  /** 1-based position in a ranked list, shown as a badge. */
+  rank?: number;
+  delay?: number;
+  /** Overrides the score's own headline, so a list can avoid repeating itself. */
+  headline?: string;
 }) {
+  const lead = headline ?? score.headline;
+  // The headline is often the strongest reason verbatim, so it is dropped from
+  // the list below rather than printed twice.
   const positives = score.dimensions
     .flatMap((d) => d.reasons)
-    .filter((r) => r.severity === "good")
+    .filter((r) => r.severity === "good" && !lead.includes(r.text))
     .slice(0, compact ? 1 : 2);
 
   return (
-    <Card className="overflow-hidden">
+    <Card className="group overflow-hidden" interactive={Boolean(href)} delay={delay}>
       <div className="flex gap-4 p-4">
-        <div className="flex shrink-0 gap-1.5">
+        <div className="relative flex shrink-0 gap-1.5">
+          {rank !== undefined && (
+            <span className="tabular absolute -left-1 -top-1 z-10 flex h-6 w-6 items-center justify-center rounded-full border border-[var(--color-line)] bg-[var(--color-ink)] text-[11px] font-semibold text-[var(--color-accent)] shadow-lg">
+              {rank}
+            </span>
+          )}
           {garments.slice(0, 4).map((g) => (
             <Link
               key={g.id}
               href={`/wardrobe/${g.id}`}
-              className="block h-20 w-16 overflow-hidden rounded-lg border border-[var(--color-line)] transition-transform hover:scale-105"
+              className="block h-20 w-16 overflow-hidden rounded-xl border border-[var(--color-line)] shadow-md transition-transform duration-200 hover:z-10 hover:scale-110"
               title={g.name}
             >
               <GarmentThumb garment={g} />
@@ -44,19 +60,19 @@ export function OutfitCard({
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <VerdictBadge verdict={score.verdict} />
-              <p className="mt-1.5 text-sm leading-snug">{score.headline}</p>
+              <p className="mt-2 text-[15px] leading-snug">{lead}</p>
             </div>
-            <ScoreRing score={score.total} verdict={score.verdict} size={compact ? 56 : 64} />
+            <ScoreRing score={score.total} verdict={score.verdict} size={compact ? 62 : 76} />
           </div>
 
-          <p className="mt-2 truncate text-xs text-[var(--color-faint)]">
+          <p className="mt-2.5 truncate text-xs text-[var(--color-faint)]">
             {garments.map((g) => g.name).join(" · ")}
           </p>
         </div>
       </div>
 
       {(score.topFixes.length > 0 || positives.length > 0) && (
-        <ul className="border-t border-[var(--color-line-soft)] px-4 py-2">
+        <ul className="border-t border-[var(--color-line-soft)] bg-black/15 px-4 py-2.5">
           {score.topFixes.slice(0, compact ? 1 : 2).map((r, i) => (
             <ReasonRow key={`fix-${i}`} reason={r} />
           ))}
@@ -67,9 +83,13 @@ export function OutfitCard({
       )}
 
       {href && (
-        <div className="border-t border-[var(--color-line-soft)] px-4 py-2">
-          <Link href={href} className="text-xs text-[var(--color-accent)] hover:underline">
-            Open in studio →
+        <div className="border-t border-[var(--color-line-soft)] px-4 py-2.5">
+          <Link
+            href={href}
+            className="inline-flex items-center gap-1 text-xs font-medium text-[var(--color-accent)] transition-colors hover:text-[var(--color-text)]"
+          >
+            Open in studio
+            <span aria-hidden className="transition-transform duration-200 group-hover:translate-x-1">→</span>
           </Link>
         </div>
       )}

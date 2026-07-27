@@ -11,7 +11,7 @@ import { evaluateGarmentFit } from "../src/lib/engine/fit.ts";
 import { deriveBodyShape } from "../src/lib/engine/bodyShape.ts";
 import { scoreFormality, outfitFormality } from "../src/lib/engine/formality.ts";
 import { outfitClo, neutralTemp, scoreWeather } from "../src/lib/engine/weather.ts";
-import { scoreOutfit } from "../src/lib/engine/index.ts";
+import { scoreOutfit, distinctHeadlines, headlineOptions } from "../src/lib/engine/index.ts";
 import { computeCalibrations } from "../src/lib/engine/calibration.ts";
 import { findOutfits } from "../src/lib/engine/combos.ts";
 import { planPacking } from "../src/lib/engine/packing.ts";
@@ -577,6 +577,49 @@ describe("outfit search", () => {
 
   test("an empty wardrobe returns nothing rather than throwing", () => {
     assert.deepEqual(findOutfits([], profile, {}, {}), []);
+  });
+
+  /*
+   * Four suggestions scored on one wardrobe often share a strongest dimension,
+   * and the headline is derived from it — so the page was showing the same
+   * sentence four times, which reads as a template rather than a judgement.
+   */
+  test("a list of suggestions doesn't repeat itself", () => {
+    const found = findOutfits(wardrobe, profile, {}, { occasion: "smart-casual", limit: 4 });
+    assert.ok(found.length >= 2, "need at least two suggestions to collide");
+
+    const scores = found.map((f) => f.score);
+    const headlines = distinctHeadlines(scores);
+
+    assert.equal(headlines.length, scores.length);
+    assert.equal(new Set(headlines).size, headlines.length, `repeated: ${headlines.join(" | ")}`);
+    for (const h of headlines) assert.ok(h.length > 0);
+
+    // Every line still has to be one that outfit could honestly have said.
+    for (let i = 0; i < scores.length; i++) {
+      assert.ok(
+        headlineOptions(scores[i]).includes(headlines[i]),
+        `"${headlines[i]}" is not one of outfit ${i + 1}'s own lines`,
+      );
+    }
+  });
+
+  test("outfits that would collide are given different lines", () => {
+    // Two scores with identical headlines: the second must be moved off it.
+    const found = findOutfits(wardrobe, profile, {}, { occasion: "smart-casual", limit: 2 });
+    assert.ok(found.length >= 2);
+
+    const twin = { ...found[0].score };
+    const headlines = distinctHeadlines([found[0].score, twin]);
+    assert.notEqual(headlines[0], headlines[1], "a duplicate score kept the same headline");
+  });
+
+  test("headline variety never invents a line for an outfit that has none", () => {
+    const found = findOutfits(wardrobe, profile, {}, { limit: 1 });
+    const [only] = distinctHeadlines(found.map((f) => f.score));
+    // With nothing to collide with, the best line is still the one the scorer
+    // chose — variety must not cost accuracy on a single result.
+    assert.equal(only, found[0].score.headline);
   });
 });
 
