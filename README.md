@@ -17,8 +17,9 @@ npm run seed     # optional: a realistic 21-item demo wardrobe
 npm run dev      # http://localhost:3000
 ```
 
-No API keys required. No account. `DATABASE_URL` is the only thing the app
-needs; the schema creates itself on first connection.
+No API keys required. `DATABASE_URL` is the only thing the app needs; the
+schema creates itself on first connection, and the first account you register
+owns everything already in the database.
 
 Everything lives in Postgres — including the photos, which are stored as rows
 rather than files. That costs a little space and buys the app statelessness: it
@@ -69,8 +70,9 @@ measurements and re-running the whole outfit search.
 **Insights** — cost per wear, dead stock, items with nothing to pair with, and
 what the app has learned about how each brand sizes on you.
 
-**You** — measurements, colouring, fit preferences. Body shape and seasonal
-palette derive live as you type, both overridable.
+**You** — measurements, colouring, fit preferences, and a figure built from
+your girths that you can turn through 360° and tilt to see from any side. Body
+shape and seasonal palette derive live as you type, both overridable.
 
 ---
 
@@ -115,6 +117,30 @@ sizing better than any chart does.
 
 ---
 
+## Accounts
+
+Email and password, with a session cookie. Passwords are hashed with scrypt at
+N=16384 and a per-password salt; the session cookie is 32 random bytes of which
+only the SHA-256 is stored, so a leaked database yields neither passwords nor
+usable sessions. There is no auth dependency — both are `node:crypto`.
+
+Every row in every table belongs to an account, and every query filters on it,
+so isolation is a property of the data layer rather than something each route
+has to remember. Asking for another account's garment, editing it, deleting it,
+or fetching its photos all answer exactly as they would for an id that never
+existed.
+
+Signup is open by default, because the usual case is someone deploying this for
+themselves. Set `FITCHECK_SIGNUP=closed` once the accounts that should exist do
+— the first account is always allowed, or a closed instance could never be set
+up at all.
+
+**Upgrading an instance that predates accounts:** nothing is lost. Rows without
+an owner are invisible to every query until the first account is created, which
+adopts them. Register first, with the address you want to keep.
+
+---
+
 ## Configuration
 
 `DATABASE_URL` is required. Everything else is optional.
@@ -124,6 +150,7 @@ sizing better than any chart does.
 | `DATABASE_URL` | **Required.** Postgres connection string. |
 | `DATABASE_SSL` | `disable`, `require`, or `verify`. Inferred from the host if unset — see below. |
 | `DATABASE_POOL_MAX` | Connections per instance. Default 10. |
+| `FITCHECK_SIGNUP` | `open` (default) or `closed`. The first account is always allowed. |
 | `FITCHECK_TRYON_PROVIDER` | `none` (default), `fal`, `fashn`, or `custom`. |
 | `FAL_KEY` | For `fal` — runs FASHN v1.6, ~$0.075 per garment layer. |
 | `FASHN_API_KEY` | For `fashn`. |
@@ -165,8 +192,9 @@ To load the demo wardrobe into the deployed database, point the seed at it:
 DATABASE_URL='<the public proxy URL from Railway>' npm run seed
 ```
 
-It refuses to run against a database that already holds garments unless you
-pass `--force`, because it truncates before it writes.
+It creates a `demo@fitcheck.local` account, prints a generated password once,
+and refuses to run against an account that already holds garments unless you
+pass `--force`, because it clears that account's wardrobe before writing.
 
 ### A note on TLS
 
@@ -202,18 +230,21 @@ src/lib/
   engine/packing.ts        set-cover packing optimiser
   engine/calibration.ts    per-brand fit learning
   engine/insights.ts       wardrobe analytics
+  avatar/body.ts           the figure: measurements lofted into a mesh
+  avatar/render.ts         software renderer — projection, shading, girth bands
+  auth.ts                  scrypt passwords, session tokens
   db.ts                    Postgres: schema, queries, image bytes
   tryon.ts                 pluggable render providers
 src/app/                   Next.js App Router pages and API routes
 src/components/            UI, including client-side colour extraction
-tests/engine.test.ts       69 tests over the engines
+tests/                     104 tests over the engines, auth and geometry
 ```
 
 ## Development
 
 ```bash
 npm run dev        # dev server
-npm test           # 69 engine tests
+npm test           # 104 tests
 npm run typecheck  # tsc --noEmit
 npm run build      # production build
 npm run seed       # reset to the demo wardrobe (--force if not empty)
@@ -231,6 +262,9 @@ pull, or how a curved seam sits. Size-chart inference is genuinely weak, which
 is why it's marked at 45% confidence and why the calibration loop exists. Body
 shape archetypes are a simplification, scored continuously and overridable. The
 12-season colour system is an industry convention, not physics; it's implemented
-with a confidence and an override rather than presented as fact. The proportion
+with a confidence and an override rather than presented as fact. The figure on
+the You page is a tailor's dummy rather than a scan: a girth says how far around
+a landmark is, not what shape it is, so it gets your proportions right and your
+posture, muscle and bone structure wrong. The proportion
 rules encode conventional styling — they describe where the eye lands, not what
 anyone *should* wear, and every one of them is visible and ignorable.

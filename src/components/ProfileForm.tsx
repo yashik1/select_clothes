@@ -16,6 +16,7 @@ import type {
   Unit,
 } from "@/lib/types";
 import { Button, Card, ConfidenceBar, Pill, SectionTitle, Swatch } from "./ui";
+import { BodyAvatar } from "./BodyAvatar";
 import { ImageUploader } from "./ImageUploader";
 
 const UNDERTONES: { key: Undertone; label: string; how: string }[] = [
@@ -133,8 +134,8 @@ export function ProfileForm({ initial }: { initial: Profile }) {
         <div>
           <h1 className="display text-3xl font-semibold">You</h1>
           <p className="mt-1 max-w-2xl text-sm text-[var(--color-muted)]">
-            Everything here is stored locally in your own database file. Nothing is uploaded
-            anywhere unless you explicitly turn on a try-on provider.
+            Everything here is private to your account. Nothing leaves this server unless you
+            explicitly turn on a try-on provider.
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -221,6 +222,7 @@ export function ProfileForm({ initial }: { initial: Profile }) {
           Measurements
         </SectionTitle>
 
+        <div className="grid gap-5 lg:grid-cols-[1fr_23rem]">
         <div className="space-y-4">
           {MEASUREMENT_GROUPS.map((group) => (
             <Card key={group.title} className="p-5">
@@ -252,6 +254,14 @@ export function ProfileForm({ initial }: { initial: Profile }) {
               </div>
             </Card>
           ))}
+        </div>
+
+          {/* Beside the fields rather than below them, and sticky, so a
+              measurement you type changes the figure while you're still
+              looking at the box you typed it into. */}
+          <div className="lg:sticky lg:top-20 lg:self-start">
+            <BodyAvatar measurements={measurements} unit={unit} />
+          </div>
         </div>
       </div>
 
