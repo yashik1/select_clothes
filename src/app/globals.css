@@ -1,0 +1,112 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #0d0e11;
+  --color-surface: #14161b;
+  --color-raised: #1b1e25;
+  --color-line: #272b34;
+  --color-line-soft: #1f232a;
+
+  --color-text: #e9eaee;
+  --color-muted: #9aa1ae;
+  --color-faint: #6b7280;
+
+  --color-accent: #c8a76a;
+  --color-accent-soft: #3a3218;
+
+  --color-good: #5fbf8a;
+  --color-warn: #e0b055;
+  --color-bad: #e0705f;
+  --color-info: #7aa7d9;
+
+  --font-display: ui-serif, Georgia, "Times New Roman", serif;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  background: var(--color-ink);
+  color: var(--color-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Numbers in tables and measurement fields must line up. */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+.display {
+  font-family: var(--font-display);
+  letter-spacing: -0.015em;
+}
+
+/* Inputs: styled once here rather than repeating a dozen utility classes on
+   every field in the measurement forms. */
+input[type="text"],
+input[type="number"],
+input[type="date"],
+input[type="search"],
+select,
+textarea {
+  background: var(--color-raised);
+  border: 1px solid var(--color-line);
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.7rem;
+  color: var(--color-text);
+  font-size: 0.875rem;
+  width: 100%;
+  transition: border-color 0.15s ease;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+input[type="color"] {
+  background: transparent;
+  border: 1px solid var(--color-line);
+  border-radius: 0.5rem;
+  height: 2.4rem;
+  width: 100%;
+  padding: 2px;
+  cursor: pointer;
+}
+
+input[type="range"] {
+  accent-color: var(--color-accent);
+  width: 100%;
+}
+
+label {
+  display: block;
+}
+
+::placeholder {
+  color: var(--color-faint);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: var(--color-ink);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-line);
+  border-radius: 5px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
