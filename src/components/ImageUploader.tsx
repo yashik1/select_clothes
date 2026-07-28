@@ -26,12 +26,34 @@ const toBlob = (canvas: HTMLCanvasElement) =>
  * Downscale in the browser before upload. A modern phone photo is 4-8MB; the
  * app only ever needs a thumbnail and a try-on input, so shipping the original
  * is pure waste on both ends of the wire.
+ *
+ * Returns null when the browser can't decode the format at all — Chrome has no
+ * HEIC decoder, so every iPhone photo lands here, and no browser reads TIFF.
+ * The caller then sends the original and lets the server convert it, which is
+ * slower but always works.
  */
-async function downscale(file: File): Promise<{ blob: Blob; canvas: HTMLCanvasElement }> {
-  const bitmap = await createImageBitmap(file);
-  const canvas = fitToCanvas(bitmap, bitmap.width, bitmap.height);
-  bitmap.close();
-  return { blob: await toBlob(canvas), canvas };
+async function downscale(file: File): Promise<{ blob: Blob; canvas: HTMLCanvasElement } | null> {
+  try {
+    // `from-image` applies the EXIF orientation phones record instead of
+    // rotating pixels; without it a photo taken sideways stays sideways.
+    const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+    const canvas = fitToCanvas(bitmap, bitmap.width, bitmap.height);
+    bitmap.close();
+    return { blob: await toBlob(canvas), canvas };
+  } catch {
+    return null;
+  }
+}
+
+/** Reads a stored image back, so colours can be pulled from what the server
+ *  converted when the browser couldn't read the original. */
+function canvasFromUrl(url: string): Promise<HTMLCanvasElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(fitToCanvas(img, img.naturalWidth, img.naturalHeight));
+    img.onerror = () => reject(new Error("Could not read the stored image back."));
+    img.src = url;
+  });
 }
 
 /**
@@ -339,24 +361,54 @@ export function ImageUploader({
     setLiveCamera(Boolean(navigator.mediaDevices?.getUserMedia) && window.isSecureContext);
   }, []);
 
-  /** One place where a photo becomes a stored image, whatever produced it. */
-  const uploadCanvas = useCallback(
-    async (canvas: HTMLCanvasElement, blob: Blob, ids: string[]): Promise<string> => {
-      if (onColors && ids.length === 0) {
-        const colors = extractColors(canvas);
-        if (colors.length) onColors(colors);
-      }
-
+  /**
+   * One place where a photo becomes a stored image, whatever produced it.
+   * `canvas` is null when the browser couldn't decode the file and the original
+   * is being sent for the server to convert.
+   */
+  const upload = useCallback(
+    async (payload: File, canvas: HTMLCanvasElement | null, ids: string[]): Promise<string> => {
       const form = new FormData();
-      form.append("file", new File([blob], "photo.jpg", { type: "image/jpeg" }));
+      form.append("file", payload);
       form.append("kind", kind);
 
       const res = await fetch("/api/images", { method: "POST", body: form });
+
       if (!res.ok) {
-        const json = await res.json().catch(() => ({}));
-        throw new Error(json.error ?? "Upload failed");
+        // A bare "Upload failed" hides whether the problem was the file, the
+        // session, the size or the server. Anything the server said comes
+        // through; if it said nothing, the status code does.
+        const body = await res.text();
+        let message = "";
+        try {
+          message = (JSON.parse(body) as { error?: string }).error ?? "";
+        } catch {
+          /* not JSON — a proxy or a crash */
+        }
+        if (!message) {
+          message =
+            res.status === 401 ? "Your session expired. Sign in again."
+            : res.status === 413 ? "That image is too large for the server to accept."
+            : `Upload failed (HTTP ${res.status}).`;
+        }
+        throw new Error(message);
       }
-      return (await res.json()).id as string;
+
+      const { id, url } = (await res.json()) as { id: string; url: string };
+
+      // Colours come off whichever image we can actually read: the local one
+      // when the browser decoded it, otherwise the converted one coming back.
+      if (onColors && ids.length === 0) {
+        try {
+          const source = canvas ?? (await canvasFromUrl(url));
+          const colors = extractColors(source);
+          if (colors.length) onColors(colors);
+        } catch {
+          /* colour extraction is a convenience, never a reason to fail. */
+        }
+      }
+
+      return id;
     },
     [kind, onColors],
   );
@@ -369,8 +421,11 @@ export function ImageUploader({
 
     try {
       for (const file of Array.from(files).slice(0, max - imageIds.length)) {
-        const { blob, canvas } = await downscale(file);
-        next.push(await uploadCanvas(canvas, blob, next));
+        const shrunk = await downscale(file);
+        const payload = shrunk
+          ? new File([shrunk.blob], "photo.jpg", { type: "image/jpeg" })
+          : file;
+        next.push(await upload(payload, shrunk?.canvas ?? null, next));
       }
       onChange(next);
     } catch (e) {
@@ -390,7 +445,8 @@ export function ImageUploader({
     setError(null);
     try {
       const next = [...imageIds];
-      next.push(await uploadCanvas(canvas, await toBlob(canvas), next));
+      const blob = await toBlob(canvas);
+      next.push(await upload(new File([blob], "photo.jpg", { type: "image/jpeg" }), canvas, next));
       onChange(next);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Upload failed");
@@ -468,7 +524,7 @@ export function ImageUploader({
       <input
         ref={fileInputRef}
         type="file"
-        accept="image/jpeg,image/png,image/webp"
+        accept="image/*,.heic,.heif,.avif,.tif,.tiff"
         multiple={max > 1}
         className="hidden"
         onChange={(e) => handleFiles(e.target.files)}
