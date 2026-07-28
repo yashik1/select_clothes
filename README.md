@@ -10,7 +10,7 @@ The answer is arithmetic over centimetres, not a guess from a model — so it's
 instant, free, deterministic, and it can always show its working.
 
 ```bash
-npm install
+npm install                                                # Node 22
 createdb fitcheck                                          # any Postgres ≥ 14
 export DATABASE_URL=postgres://localhost:5432/fitcheck
 npm run seed     # optional: a realistic 21-item demo wardrobe
@@ -181,6 +181,13 @@ a number.
    sends every query out over the internet.
 4. Deploy. `railway.json` handles the rest: build, start on `$PORT`, and gate
    the deploy on `/api/health`, which fails if Postgres can't be reached.
+
+**Node 22 is required**, and pinned in `engines` and `.nvmrc` so Nixpacks picks
+it up. Image conversion uses libvips through `sharp`, which needs Node ≥ 20.9;
+Nixpacks otherwise defaults to Node 18, and the build fails while collecting
+page data with *"Could not load the sharp module"*. If your builder ignores
+both files, set `NIXPACKS_NODE_VERSION=22` as a service variable. (Node 18 has
+been end-of-life since April 2025 regardless.)
 
 The schema creates itself on first connection, guarded by a Postgres advisory
 lock so that two instances booting together can't race. If the app starts before

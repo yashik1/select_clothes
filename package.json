@@ -12,6 +12,9 @@
     "test": "tsx --test tests/*.test.ts",
     "seed": "tsx scripts/seed.ts"
   },
+  "engines": {
+    "node": "22.x"
+  },
   "dependencies": {
     "next": "^15.5.22",
     "pg": "^8.22.0",
