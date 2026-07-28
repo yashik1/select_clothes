@@ -75,7 +75,7 @@ export default async function GapsPage() {
                   </div>
 
                   <div className="text-right">
-                    <p className="tabular display text-3xl text-[var(--color-accent)]">+{r.unlocked}</p>
+                    <p className="tabular display text-4xl text-[var(--color-good)]">+{r.unlocked}</p>
                     <p className="text-xs text-[var(--color-faint)]">new outfits</p>
                     <p className="tabular mt-1 text-xs text-[var(--color-faint)]">
                       ≈{r.costPerUnlock} per outfit unlocked

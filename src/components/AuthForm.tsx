@@ -38,17 +38,17 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
   }
 
   return (
-    <div className="mx-auto max-w-sm">
-      <h1 className="display text-3xl font-semibold">
+    <div className="mx-auto max-w-md py-10">
+      <h1 className="display text-4xl">
         {signup ? "Create an account" : "Sign in"}
       </h1>
-      <p className="mt-2 text-sm text-[var(--color-muted)]">
+      <p className="mt-3 text-[1.0625rem] text-[var(--color-muted)]">
         {signup
           ? "Your measurements and wardrobe are private to your account."
           : "Welcome back."}
       </p>
 
-      <Card className="mt-6 p-5">
+      <Card className="mt-8 p-7">
         <form onSubmit={submit} className="space-y-4">
           <div>
             <label htmlFor="email" className="mb-1 block text-xs font-medium text-[var(--color-muted)]">
@@ -96,17 +96,17 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
             </p>
           )}
 
-          <Button type="submit" disabled={busy} className="w-full justify-center">
+          <Button type="submit" disabled={busy} className="w-full justify-center py-3">
             {busy ? "One moment…" : signup ? "Create account" : "Sign in"}
           </Button>
         </form>
       </Card>
 
-      <p className="mt-4 text-center text-sm text-[var(--color-muted)]">
+      <p className="mt-5 text-center text-sm text-[var(--color-muted)]">
         {signup ? "Already have an account? " : "No account yet? "}
         <Link
           href={signup ? "/login" : "/signup"}
-          className="text-[var(--color-accent)] hover:underline"
+          className="font-medium text-[var(--color-text)] underline underline-offset-4"
         >
           {signup ? "Sign in" : "Create one"}
         </Link>

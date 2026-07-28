@@ -226,7 +226,7 @@ export function ProfileForm({ initial }: { initial: Profile }) {
         <div className="space-y-4">
           {MEASUREMENT_GROUPS.map((group) => (
             <Card key={group.title} className="p-5">
-              <p className="font-medium">{group.title}</p>
+              <p className="display text-xl">{group.title}</p>
               <p className="mt-0.5 mb-4 text-sm text-[var(--color-muted)]">{group.blurb}</p>
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 {group.fields.map((f) => (
@@ -420,7 +420,7 @@ export function ProfileForm({ initial }: { initial: Profile }) {
                 {swatches.map((s, i) => (
                   <span
                     key={`${s.hex}-${i}`}
-                    className="h-7 w-7 rounded-md border border-white/10"
+                    className="h-7 w-7 rounded-full border border-black/10"
                     style={{ background: s.hex }}
                     title={s.hex}
                   />

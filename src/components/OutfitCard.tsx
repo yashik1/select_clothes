@@ -37,10 +37,10 @@ export function OutfitCard({
 
   return (
     <Card className="group overflow-hidden" interactive={Boolean(href)} delay={delay}>
-      <div className="flex gap-4 p-4">
+      <div className="flex gap-5 p-5">
         <div className="relative flex shrink-0 gap-1.5">
           {rank !== undefined && (
-            <span className="tabular absolute -left-1 -top-1 z-10 flex h-6 w-6 items-center justify-center rounded-full border border-[var(--color-line)] bg-[var(--color-ink)] text-[11px] font-semibold text-[var(--color-accent)] shadow-lg">
+            <span className="tabular absolute -left-2 -top-2 z-10 flex h-6 w-6 items-center justify-center rounded-full bg-[var(--color-ink)] text-[11px] font-medium text-white">
               {rank}
             </span>
           )}
@@ -48,7 +48,7 @@ export function OutfitCard({
             <Link
               key={g.id}
               href={`/wardrobe/${g.id}`}
-              className="block h-20 w-16 overflow-hidden rounded-xl border border-[var(--color-line)] shadow-md transition-transform duration-200 hover:z-10 hover:scale-110"
+              className="block h-20 w-16 overflow-hidden rounded-2xl border border-[var(--color-line)] transition-transform duration-200 hover:z-10 hover:scale-105"
               title={g.name}
             >
               <GarmentThumb garment={g} />
@@ -60,7 +60,7 @@ export function OutfitCard({
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <VerdictBadge verdict={score.verdict} />
-              <p className="mt-2 text-[15px] leading-snug">{lead}</p>
+              <p className="display mt-2.5 text-lg leading-snug">{lead}</p>
             </div>
             <ScoreRing score={score.total} verdict={score.verdict} size={compact ? 62 : 76} />
           </div>
@@ -72,7 +72,7 @@ export function OutfitCard({
       </div>
 
       {(score.topFixes.length > 0 || positives.length > 0) && (
-        <ul className="border-t border-[var(--color-line-soft)] bg-black/15 px-4 py-2.5">
+        <ul className="border-t border-[var(--color-line-soft)] bg-[var(--color-surface)] px-5 py-3">
           {score.topFixes.slice(0, compact ? 1 : 2).map((r, i) => (
             <ReasonRow key={`fix-${i}`} reason={r} />
           ))}
@@ -83,10 +83,10 @@ export function OutfitCard({
       )}
 
       {href && (
-        <div className="border-t border-[var(--color-line-soft)] px-4 py-2.5">
+        <div className="border-t border-[var(--color-line-soft)] px-5 py-3">
           <Link
             href={href}
-            className="inline-flex items-center gap-1 text-xs font-medium text-[var(--color-accent)] transition-colors hover:text-[var(--color-text)]"
+            className="inline-flex items-center gap-1.5 text-sm font-medium text-[var(--color-text)] transition-colors hover:text-[var(--color-muted)]"
           >
             Open in studio
             <span aria-hidden className="transition-transform duration-200 group-hover:translate-x-1">→</span>

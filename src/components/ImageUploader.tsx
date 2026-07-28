@@ -410,7 +410,7 @@ export function ImageUploader({
     <div>
       <div className="flex flex-wrap items-start gap-2">
         {imageIds.map((id) => (
-          <div key={id} className="group relative h-28 w-24 overflow-hidden rounded-lg border border-[var(--color-line)]">
+          <div key={id} className="group relative h-28 w-24 overflow-hidden rounded-2xl border border-[var(--color-line)]">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={`/api/images/${id}`} alt="" className="h-full w-full object-cover" />
             <button
@@ -429,7 +429,7 @@ export function ImageUploader({
               type="button"
               onClick={openCamera}
               disabled={busy}
-              className="flex h-28 w-24 flex-col items-center justify-center gap-1.5 rounded-lg border border-dashed border-[var(--color-line)] text-xs text-[var(--color-muted)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:opacity-50"
+              className="flex h-28 w-24 flex-col items-center justify-center gap-1.5 rounded-2xl border border-dashed border-[var(--color-line)] bg-[var(--color-paper)] text-xs text-[var(--color-muted)] transition-colors hover:border-[var(--color-ink)] hover:text-[var(--color-text)] disabled:opacity-50"
             >
               {busy ? (
                 "Uploading…"
@@ -445,7 +445,7 @@ export function ImageUploader({
               type="button"
               onClick={() => fileInputRef.current?.click()}
               disabled={busy}
-              className="flex h-28 w-24 flex-col items-center justify-center gap-1.5 rounded-lg border border-dashed border-[var(--color-line)] text-xs text-[var(--color-muted)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:opacity-50"
+              className="flex h-28 w-24 flex-col items-center justify-center gap-1.5 rounded-2xl border border-dashed border-[var(--color-line)] bg-[var(--color-paper)] text-xs text-[var(--color-muted)] transition-colors hover:border-[var(--color-ink)] hover:text-[var(--color-text)] disabled:opacity-50"
             >
               <span className="text-lg leading-none">+</span>
               <span>Choose file</span>

@@ -29,17 +29,14 @@ export function Nav() {
             key={item.href}
             href={item.href}
             aria-current={active ? "page" : undefined}
-            className={`relative rounded-lg px-3 py-1.5 transition-colors ${
+            className={`relative rounded-full px-3.5 py-1.5 transition-colors ${
               active
                 ? "text-[var(--color-text)]"
-                : "text-[var(--color-muted)] hover:bg-[var(--color-raised)] hover:text-[var(--color-text)]"
+                : "text-[var(--color-muted)] hover:text-[var(--color-text)]"
             }`}
           >
             {active && (
-              <span
-                aria-hidden
-                className="absolute inset-0 rounded-lg bg-[var(--color-accent)]/10 ring-1 ring-inset ring-[var(--color-accent)]/25"
-              />
+              <span aria-hidden className="absolute inset-0 rounded-full bg-[var(--color-raised)]" />
             )}
             <span className="relative">{item.label}</span>
           </Link>

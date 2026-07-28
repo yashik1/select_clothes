@@ -26,13 +26,19 @@ export interface Theme {
   label: string;
 }
 
+/**
+ * Tuned for paper. On a light page an unlit face has to stay well above the
+ * background or the figure dissolves into it, so ambient is high and the
+ * "skin" is a warm mid tone rather than a bright one — the shading range runs
+ * downward from the page, not upward from black.
+ */
 export const DEFAULT_THEME: Theme = {
-  skin: [126, 148, 178],
-  ambient: 0.34,
-  outline: "rgba(8,12,20,0.55)",
-  ring: "rgba(126,214,255,0.95)",
-  ringEstimated: "rgba(255,255,255,0.28)",
-  label: "rgba(226,236,248,0.92)",
+  skin: [176, 166, 154],
+  ambient: 0.62,
+  outline: "rgba(50,48,47,0.35)",
+  ring: "#32302f",
+  ringEstimated: "rgba(50,48,47,0.45)",
+  label: "rgba(50,48,47,0.9)",
 };
 
 function rotate(p: Vec3, yaw: number, pitch: number): Vec3 {

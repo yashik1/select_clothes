@@ -37,18 +37,14 @@ export default async function Today({
   const headlines = distinctHeadlines(suggestions.map((s) => s.score));
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-14">
       {/* ------------------------------------------------------- header -- */}
       <div className="rise flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="display text-4xl font-semibold sm:text-5xl">
-            {greeting()},{" "}
-            <span className="bg-gradient-to-br from-[var(--color-accent)] to-[var(--color-accent-deep)] bg-clip-text text-transparent">
-              {profile.name}
-            </span>
-            .
+          <h1 className="display text-5xl leading-[1.05] sm:text-6xl">
+            {greeting()}, {profile.name}.
           </h1>
-          <p className="mt-2 text-sm text-[var(--color-muted)]">
+          <p className="mt-4 max-w-xl text-[1.0625rem] leading-relaxed text-[var(--color-muted)]">
             {forecast
               ? `${Math.round(forecast.tempC)}°C, ${forecast.label?.toLowerCase()} in ${profile.locationLabel ?? "your area"}. ${forecast.precipitationMm && forecast.precipitationMm > 0.4 ? "Rain is coming." : ""}`
               : "Set your location on the You page and the weather starts feeding into every score."}
@@ -63,10 +59,10 @@ export default async function Today({
 
       {/* ---------------------------------------------- onboarding nudge -- */}
       {!readiness.ready && (
-        <Card className="rise overflow-hidden border-[var(--color-accent)]/40 p-5 shadow-[0_0_40px_-24px_var(--color-accent)]">
+        <Card className="rise overflow-hidden border-transparent bg-[var(--color-raised)] p-7">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
-              <p className="display text-lg">Your measurements are what make this different.</p>
+              <p className="display text-2xl">Your measurements are what make this different.</p>
               <p className="mt-1 max-w-2xl text-sm text-[var(--color-muted)]">
                 Right now the fit engine is guessing. Five measurements — chest, waist, hip,
                 inseam and shoulder — take four minutes with a tape measure and turn every
@@ -92,10 +88,10 @@ export default async function Today({
               key={key}
               href={`/?occasion=${key}`}
               style={{ "--delay": `${i * 22}ms` } as React.CSSProperties}
-              className={`rise rounded-full border px-3.5 py-1.5 text-xs font-medium transition-all duration-150 hover:-translate-y-0.5 ${
+              className={`rise rounded-full border px-4 py-2 text-sm transition-colors ${
                 key === occasion
-                  ? "border-transparent bg-gradient-to-b from-[var(--color-accent)] to-[var(--color-accent-deep)] text-[var(--color-ink)] shadow-[0_6px_16px_-8px_var(--color-accent)]"
-                  : "border-[var(--color-line)] text-[var(--color-muted)] hover:border-[var(--color-accent)]/50 hover:text-[var(--color-text)]"
+                  ? "border-[var(--color-ink)] bg-[var(--color-ink)] text-white"
+                  : "border-[var(--color-line)] bg-[var(--color-paper)] text-[var(--color-muted)] hover:border-[var(--color-ink)] hover:text-[var(--color-text)]"
               }`}
             >
               {OCCASIONS[key].label}
@@ -130,7 +126,7 @@ export default async function Today({
             cta={<Button href="/gaps">See what's missing</Button>}
           />
         ) : (
-          <div className="grid gap-3 lg:grid-cols-2">
+          <div className="grid gap-5 lg:grid-cols-2">
             {suggestions.map((s, i) => (
               <OutfitCard
                 key={s.garments.map((g) => g.id).join("-")}
@@ -147,7 +143,7 @@ export default async function Today({
       </div>
 
       {/* --------------------------------------------------------- links -- */}
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-5 sm:grid-cols-3">
         <QuickLink
           href="/gaps"
           title="What should I buy next?"
@@ -171,8 +167,8 @@ export default async function Today({
 function QuickLink({ href, title, body }: { href: string; title: string; body: string }) {
   return (
     <Link href={href} className="group block">
-      <Card className="h-full p-5" interactive>
-        <p className="flex items-center justify-between gap-2 font-medium">
+      <Card className="h-full p-6" interactive>
+        <p className="display flex items-center justify-between gap-2 text-lg">
           {title}
           <span
             aria-hidden
@@ -181,7 +177,7 @@ function QuickLink({ href, title, body }: { href: string; title: string; body: s
             →
           </span>
         </p>
-        <p className="mt-1.5 text-sm leading-relaxed text-[var(--color-muted)]">{body}</p>
+        <p className="mt-2 text-sm leading-relaxed text-[var(--color-muted)]">{body}</p>
       </Card>
     </Link>
   );

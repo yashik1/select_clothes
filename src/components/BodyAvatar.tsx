@@ -117,7 +117,7 @@ export function BodyAvatar({
   const missing = mesh.estimated.length;
 
   return (
-    <div className="rounded-xl border border-[var(--color-line)] bg-[var(--color-raised)] p-3">
+    <div className="rounded-3xl border border-[var(--color-line)] bg-[var(--color-surface)] p-4">
       <canvas
         ref={canvasRef}
         role="img"
@@ -143,7 +143,7 @@ export function BodyAvatar({
               setSpinning(false);
               setCamera((c) => ({ ...c, yaw: v.yaw, pitch: v.pitch }));
             }}
-            className="rounded-md border border-[var(--color-line)] px-2.5 py-1 text-xs text-[var(--color-muted)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+            className="rounded-full border border-[var(--color-line)] bg-[var(--color-paper)] px-3 py-1 text-xs text-[var(--color-muted)] transition-colors hover:border-[var(--color-ink)] hover:text-[var(--color-text)]"
           >
             {v.label}
           </button>
@@ -152,10 +152,10 @@ export function BodyAvatar({
         <button
           onClick={() => setSpinning((s) => !s)}
           aria-pressed={spinning}
-          className={`rounded-md border px-2.5 py-1 text-xs transition-colors ${
+          className={`rounded-full border px-3 py-1 text-xs transition-colors ${
             spinning
-              ? "border-[var(--color-accent)] text-[var(--color-accent)]"
-              : "border-[var(--color-line)] text-[var(--color-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+              ? "border-[var(--color-ink)] bg-[var(--color-ink)] text-white"
+              : "border-[var(--color-line)] bg-[var(--color-paper)] text-[var(--color-muted)] hover:border-[var(--color-ink)] hover:text-[var(--color-text)]"
           }`}
         >
           {spinning ? "Stop" : "Spin"}
@@ -164,10 +164,10 @@ export function BodyAvatar({
         <button
           onClick={() => setShowRings((s) => !s)}
           aria-pressed={showRings}
-          className={`rounded-md border px-2.5 py-1 text-xs transition-colors ${
+          className={`rounded-full border px-3 py-1 text-xs transition-colors ${
             showRings
-              ? "border-[var(--color-accent)] text-[var(--color-accent)]"
-              : "border-[var(--color-line)] text-[var(--color-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+              ? "border-[var(--color-ink)] bg-[var(--color-ink)] text-white"
+              : "border-[var(--color-line)] bg-[var(--color-paper)] text-[var(--color-muted)] hover:border-[var(--color-ink)] hover:text-[var(--color-text)]"
           }`}
         >
           Measurements
@@ -177,14 +177,14 @@ export function BodyAvatar({
           <button
             onClick={() => setCamera((c) => ({ ...c, zoom: Math.max(0.6, c.zoom - 0.15) }))}
             aria-label="Zoom out"
-            className="rounded-md border border-[var(--color-line)] px-2 py-1 text-xs text-[var(--color-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+            className="rounded-full border border-[var(--color-line)] bg-[var(--color-paper)] px-2.5 py-1 text-xs text-[var(--color-muted)] hover:border-[var(--color-ink)] hover:text-[var(--color-text)]"
           >
             −
           </button>
           <button
             onClick={() => setCamera((c) => ({ ...c, zoom: Math.min(2.2, c.zoom + 0.15) }))}
             aria-label="Zoom in"
-            className="rounded-md border border-[var(--color-line)] px-2 py-1 text-xs text-[var(--color-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+            className="rounded-full border border-[var(--color-line)] bg-[var(--color-paper)] px-2.5 py-1 text-xs text-[var(--color-muted)] hover:border-[var(--color-ink)] hover:text-[var(--color-text)]"
           >
             +
           </button>

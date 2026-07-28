@@ -201,7 +201,7 @@ export function GarmentForm({ profile, initial }: { profile: Profile; initial?: 
         <div className="space-y-6">
           {/* ------------------------------------------------- photos -- */}
           <Card className="p-5">
-            <p className="mb-3 font-medium">Photos</p>
+            <p className="display mb-4 text-xl">Photos</p>
             <ImageUploader
               imageIds={g.imageIds}
               onChange={(imageIds) => patch({ imageIds })}
@@ -212,7 +212,7 @@ export function GarmentForm({ profile, initial }: { profile: Profile; initial?: 
 
           {/* --------------------------------------------------- what -- */}
           <Card className="space-y-4 p-5">
-            <p className="font-medium">What is it?</p>
+            <p className="display text-xl">What is it?</p>
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
                 <Label>Name</Label>
@@ -249,7 +249,7 @@ export function GarmentForm({ profile, initial }: { profile: Profile; initial?: 
 
           {/* --------------------------------------------------- size -- */}
           <Card className="space-y-4 p-5">
-            <p className="font-medium">Size</p>
+            <p className="display text-xl">Size</p>
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
                 <Label>Sizing system</Label>
@@ -298,7 +298,7 @@ export function GarmentForm({ profile, initial }: { profile: Profile; initial?: 
 
           {/* -------------------------------------------------- colour -- */}
           <Card className="space-y-4 p-5">
-            <p className="font-medium">Colour and pattern</p>
+            <p className="display text-xl">Colour and pattern</p>
             <div>
               <Label>Colours</Label>
               <div className="space-y-2">
@@ -381,7 +381,7 @@ export function GarmentForm({ profile, initial }: { profile: Profile; initial?: 
           {/* -------------------------------------------------- fabric -- */}
           <Card className="space-y-4 p-5">
             <div className="flex items-baseline justify-between">
-              <p className="font-medium">Fabric</p>
+              <p className="display text-xl">Fabric</p>
               <p className="text-xs text-[var(--color-faint)]">
                 Off the care label. Drives stretch, warmth and breathability.
               </p>
@@ -488,7 +488,7 @@ export function GarmentForm({ profile, initial }: { profile: Profile; initial?: 
 
           {/* --------------------------------------------------- admin -- */}
           <Card className="space-y-4 p-5">
-            <p className="font-medium">Practicalities</p>
+            <p className="display text-xl">Practicalities</p>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               <div>
                 <Label>Formality (1 lounge → 5 black tie)</Label>

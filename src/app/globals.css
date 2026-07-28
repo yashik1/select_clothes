@@ -1,64 +1,64 @@
 @import "tailwindcss";
 
 @theme {
-  /* Surfaces climb in steps you can actually see. The old palette moved a
-     couple of points per level, which is why every card read as the same
-     grey rectangle as the page behind it. */
-  --color-ink: #08090d;
-  --color-surface: #12141c;
-  --color-raised: #1a1d28;
-  --color-line: #2b3142;
-  --color-line-soft: #1f2431;
+  /*
+   * Wealthsimple's palette is essentially two colours: white, and a warm
+   * near-black they call Dune (#32302F — 20° hue, barely 3% saturation). It
+   * reads as black but never as cold, and that warmth is what stops a
+   * high-contrast light interface from feeling clinical.
+   *
+   * Everything neutral here is pulled a few degrees toward that same warmth,
+   * so paper, rules and greys belong to one family rather than being grey
+   * dropped on beige.
+   */
+  --color-ink: #32302f;
+  --color-paper: #ffffff;
+  --color-surface: #faf8f5;
+  --color-raised: #f2eee8;
+  --color-line: #e4dfd7;
+  --color-line-soft: #efebe4;
 
-  --color-text: #edeff5;
-  --color-muted: #98a1b5;
-  --color-faint: #6a7386;
+  --color-text: #32302f;
+  --color-muted: #6d6763;
+  --color-faint: #9a938d;
 
-  --color-accent: #f0c674;
-  --color-accent-deep: #c99a45;
-  --color-accent-soft: #3a2f18;
+  /* The primary action is Dune on white, not a coloured button. Colour is
+     reserved for meaning. */
+  --color-accent: #32302f;
+  --color-accent-deep: #1c1b1a;
+  --color-accent-soft: #f0ece5;
 
-  --color-good: #4ade80;
-  --color-warn: #fbbf24;
-  --color-bad: #f87171;
-  --color-info: #60a5fa;
+  /* Contemporary primaries: warm rather than digital. */
+  --color-yellow: #f2c230;
+  --color-red: #d9503c;
+  --color-blue: #2f5fa8;
 
-  /* One hue per scored dimension. Six identical grey bars told you nothing at
-     a glance; six coloured ones make the shape of a score readable before you
-     have read a single number, and the colour means something. */
-  --color-dim-fit: #a78bfa;
-  --color-dim-color: #f472b6;
-  --color-dim-proportion: #22d3ee;
-  --color-dim-formality: #fbbf24;
-  --color-dim-weather: #60a5fa;
-  --color-dim-novelty: #4ade80;
+  --color-good: #1f7a4d;
+  --color-warn: #b07a0c;
+  --color-bad: #c0432f;
+  --color-info: #2f5fa8;
 
-  --font-display: ui-serif, Georgia, "Times New Roman", serif;
+  /* One hue per scored dimension, darkened to hold up on paper. */
+  --color-dim-fit: #6d4ac7;
+  --color-dim-color: #bd3a78;
+  --color-dim-proportion: #0e7c86;
+  --color-dim-formality: #b07a0c;
+  --color-dim-weather: #2f5fa8;
+  --color-dim-novelty: #3f7d3a;
+
+  --font-display: var(--font-serif), ui-serif, Georgia, serif;
+  --font-body: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
 }
 
 :root {
-  color-scheme: dark;
+  color-scheme: light;
 }
 
 body {
-  background: var(--color-ink);
+  background: var(--color-surface);
   color: var(--color-text);
+  font-family: var(--font-body);
   -webkit-font-smoothing: antialiased;
-  position: relative;
-}
-
-/* An ambient wash so the page is a lit room rather than a void. Fixed and
-   inert, behind everything. */
-body::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-  pointer-events: none;
-  background:
-    radial-gradient(60rem 40rem at 12% -10%, rgba(167, 139, 250, 0.1), transparent 60%),
-    radial-gradient(50rem 34rem at 92% 4%, rgba(240, 198, 116, 0.08), transparent 62%),
-    radial-gradient(46rem 46rem at 50% 108%, rgba(34, 211, 238, 0.06), transparent 60%);
 }
 
 /* Numbers in tables and measurement fields must line up. */
@@ -66,6 +66,11 @@ body::before {
   font-variant-numeric: tabular-nums;
 }
 
+/*
+ * The serif carries every number and every heading. Wealthsimple's whole trick
+ * is that a large figure set in Caslon reads as considered rather than
+ * technical — which is exactly the claim this app makes about its scores.
+ */
 .display {
   font-family: var(--font-display);
   letter-spacing: -0.02em;
@@ -76,7 +81,7 @@ body::before {
 @keyframes rise {
   from {
     opacity: 0;
-    transform: translateY(14px);
+    transform: translateY(12px);
   }
   to {
     opacity: 1;
@@ -90,15 +95,8 @@ body::before {
   }
 }
 
-@keyframes glow-pulse {
-  0%, 100% { opacity: 0.55; }
-  50% { opacity: 0.9; }
-}
-
-/* Content arrives rather than appearing. `--delay` staggers a list so the eye
-   is led down it instead of being handed everything at once. */
 .rise {
-  animation: rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: rise 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
   animation-delay: var(--delay, 0ms);
 }
 
@@ -112,43 +110,43 @@ input[type="password"],
 input[type="search"],
 select,
 textarea {
-  background: var(--color-raised);
+  background: var(--color-paper);
   border: 1px solid var(--color-line);
-  border-radius: 0.6rem;
-  padding: 0.55rem 0.75rem;
+  border-radius: 0.75rem;
+  padding: 0.7rem 0.9rem;
   color: var(--color-text);
-  font-size: 0.875rem;
+  font-family: var(--font-body);
+  font-size: 0.9375rem;
   width: 100%;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 input:hover,
 select:hover,
 textarea:hover {
-  border-color: color-mix(in srgb, var(--color-line) 60%, var(--color-muted));
+  border-color: #d2ccc2;
 }
 
 input:focus,
 select:focus,
 textarea:focus {
   outline: none;
-  border-color: var(--color-accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 18%, transparent);
-  background: color-mix(in srgb, var(--color-raised) 88%, var(--color-accent));
+  border-color: var(--color-ink);
+  box-shadow: 0 0 0 3px rgba(50, 48, 47, 0.1);
 }
 
 input[type="color"] {
-  background: transparent;
+  background: var(--color-paper);
   border: 1px solid var(--color-line);
-  border-radius: 0.6rem;
-  height: 2.4rem;
+  border-radius: 0.75rem;
+  height: 2.6rem;
   width: 100%;
-  padding: 2px;
+  padding: 3px;
   cursor: pointer;
 }
 
 input[type="range"] {
-  accent-color: var(--color-accent);
+  accent-color: var(--color-ink);
   width: 100%;
 }
 
@@ -161,23 +159,23 @@ label {
 }
 
 ::selection {
-  background: color-mix(in srgb, var(--color-accent) 30%, transparent);
+  background: color-mix(in srgb, var(--color-yellow) 55%, transparent);
 }
 
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 12px;
+  height: 12px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--color-line);
-  border-radius: 5px;
-  border: 2px solid var(--color-ink);
+  background: #d8d2c8;
+  border-radius: 6px;
+  border: 3px solid var(--color-surface);
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--color-faint);
+  background: #c2bbaf;
 }
 
 @media (prefers-reduced-motion: reduce) {
