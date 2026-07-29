@@ -15,6 +15,7 @@ import { requireUser } from "@/lib/server/session";
 import { OutfitCard } from "@/components/OutfitCard";
 import { GarmentActions } from "@/components/GarmentActions";
 import { Card, ConfidenceBar, GarmentThumb, Pill, SectionTitle, Swatch } from "@/components/ui";
+import { BodyAvatar } from "@/components/BodyAvatar";
 
 export const dynamic = "force-dynamic";
 
@@ -48,7 +49,7 @@ export default async function GarmentPage({ params }: { params: Promise<{ id: st
     <div className="space-y-8">
       <div className="grid gap-6 lg:grid-cols-[18rem_1fr]">
         <div>
-          <div className="aspect-[3/4] overflow-hidden rounded-xl border border-[var(--color-line)] bg-[var(--color-raised)]">
+          <div className="aspect-[3/4] overflow-hidden rounded-2xl border border-[var(--color-line)] bg-[var(--color-raised)]">
             <GarmentThumb garment={garment} />
           </div>
           {garment.imageIds.length > 1 && (
@@ -214,6 +215,16 @@ export default async function GarmentPage({ params }: { params: Promise<{ id: st
             </p>
           )}
         </Card>
+      </div>
+
+      {/* ------------------------------------------------------- on you -- */}
+      <div>
+        <SectionTitle hint="The same figure as your measurements, wearing this. Every number in the table above is a distance you can see here.">
+          On you
+        </SectionTitle>
+        <div className="max-w-md">
+          <BodyAvatar measurements={profile.measurements} unit={profile.unit} garments={[garment]} />
+        </div>
       </div>
 
       {/* --------------------------------------------------- pairings -- */}

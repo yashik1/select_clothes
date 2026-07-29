@@ -37,10 +37,40 @@ export interface LandmarkRing {
   estimated: boolean;
 }
 
+/** One cross-section of the body, so clothes can be lofted over it. */
+export interface Section {
+  y: number;
+  a: number;
+  b: number;
+  /** Centre offset along x — limbs don't sit on the midline. */
+  cx: number;
+}
+
+/**
+ * The body reduced to the cross-sections a garment needs to follow. Clothes
+ * are built from their own measurements, but they have to hang on this: a
+ * shirt is a tube around the torso, and where its circumference is smaller
+ * than the body's it clings rather than passing through.
+ */
+export interface BodyFrame {
+  torso: Section[];
+  leg: Section[];
+  arm: Section[];
+  legOffset: number;
+  shoulderY: number;
+  crotchY: number;
+  /** Where the garment's own landmarks sit, in cm from the floor. */
+  landmark: { neck: number; shoulder: number; chest: number; waist: number; hip: number };
+  /** Where each hem position sits, in cm from the floor. */
+  hem: Record<string, number>;
+}
+
 export interface BodyMesh {
   vertices: Vec3[];
   faces: Face[];
   rings: LandmarkRing[];
+  /** Cross-sections for hanging garments on. */
+  frame: BodyFrame;
   /** Stature in cm, so the camera can frame any body the same way. */
   height: number;
   /** Measurements that were filled in from height rather than given. */
@@ -222,6 +252,8 @@ interface Level {
   estimated: boolean;
   /** Width is given directly rather than derived, as for shoulders. */
   halfWidth?: number;
+  /** Depth, when the chest's would be wrong — the neck-to-shoulder slope. */
+  halfDepth?: number;
 }
 
 export interface BodyOptions {
@@ -265,13 +297,20 @@ export function buildBody(m: BodyMeasurements, opts: BodyOptions = {}): BodyMesh
   const ankle = g("ankle") * (calf / g("calf"));
 
   const neckAxesTop = ellipseAxes(neck, ASPECT.neck);
+  const chestAxes = ellipseAxes(chest, ASPECT.chest);
   const shoulderHalf = (shoulderWidth / 2) * SHOULDER_TORSO_SHARE;
+  /** How far the neck-to-shoulder slope has run by the trapezius. */
+  const TRAPEZIUS_RUN = 0.44;
+  const trapeziusHalf = neckAxesTop.a + (shoulderHalf - neckAxesTop.a) * TRAPEZIUS_RUN;
 
   const torso: Level[] = [
     { key: "neck", label: "Neck", y: y("neck"), circumference: neck, aspect: ASPECT.neck, estimated: estimated.includes("neck") },
     // The slope off the neck. Lofting a narrow neck straight onto a wide
-    // shoulder reads as a coat hanger.
-    { key: "trapezius", label: "", y: y("trapezius"), circumference: 0, aspect: ASPECT.shoulder, estimated: false, halfWidth: neckAxesTop.a + (shoulderHalf - neckAxesTop.a) * 0.44 },
+    // shoulder reads as a coat hanger. Depth has to climb with it: taking the
+    // chest's depth here, where the width is still nearly the neck's, made the
+    // trapezius deeper than it is wide — and anything lofted over it inherited
+    // that, which is what left the body poking through a sweater's shoulders.
+    { key: "trapezius", label: "", y: y("trapezius"), circumference: 0, aspect: ASPECT.shoulder, estimated: false, halfWidth: trapeziusHalf, halfDepth: neckAxesTop.b + (chestAxes.b * 1.02 - neckAxesTop.b) * TRAPEZIUS_RUN },
     { key: "shoulder", label: "Shoulders", y: y("shoulder"), circumference: 0, aspect: ASPECT.shoulder, estimated: estimated.includes("shoulderWidth"), halfWidth: shoulderHalf },
     { key: "chest", label: "Chest", y: y("chest"), circumference: chest, aspect: ASPECT.chest, estimated: estimated.includes("chest") },
     { key: "underbust", label: "Underbust", y: y("underbust"), circumference: underbust, aspect: ASPECT.underbust, estimated: true },
@@ -283,6 +322,9 @@ export function buildBody(m: BodyMeasurements, opts: BodyOptions = {}): BodyMesh
   const vertices: Vec3[] = [];
   const faces: Face[] = [];
   const rings: LandmarkRing[] = [];
+  const torsoSections: Section[] = [];
+  const legSections: Section[] = [];
+  const armSections: Section[] = [];
 
   // ---- torso ------------------------------------------------------------
   const torsoRings = torso.map((level) => {
@@ -290,10 +332,11 @@ export function buildBody(m: BodyMeasurements, opts: BodyOptions = {}): BodyMesh
       level.halfWidth !== undefined
         ? // Shoulder width is a width; depth follows the chest, since a wide
           // frame is not necessarily a deep one.
-          { a: level.halfWidth, b: ellipseAxes(chest, ASPECT.chest).b * 1.02 }
+          { a: level.halfWidth, b: level.halfDepth ?? chestAxes.b * 1.02 }
         : ellipseAxes(level.circumference, level.aspect);
 
     const start = ring(vertices, level.y, axes.a, axes.b);
+    torsoSections.push({ y: level.y, a: axes.a, b: axes.b, cx: 0 });
     if (level.circumference > 0) {
       rings.push({
         key: level.key,
@@ -315,6 +358,7 @@ export function buildBody(m: BodyMeasurements, opts: BodyOptions = {}): BodyMesh
   // ---- seat: hip down to where the legs separate ------------------------
   const hipAxes = torsoRings[torsoRings.length - 1].axes;
   const seatStart = ring(vertices, crotchY, hipAxes.a * 0.98, hipAxes.b * 0.95);
+  torsoSections.push({ y: crotchY, a: hipAxes.a * 0.98, b: hipAxes.b * 0.95, cx: 0 });
   loft(faces, seatStart, torsoRings[torsoRings.length - 1].start, "torso");
   // The legs start here but don't fill the opening, so without this the torso
   // is an open tube — visible as a hole straight up into the body the moment
@@ -339,6 +383,7 @@ export function buildBody(m: BodyMeasurements, opts: BodyOptions = {}): BodyMesh
     for (const [ly, circumference, aspect] of legLevels) {
       const axes = ellipseAxes(circumference, aspect);
       const start = ring(vertices, ly, axes.a, axes.b, side * legOffset, 0);
+      if (side === 1) legSections.push({ y: ly, a: axes.a, b: axes.b, cx: legOffset });
       if (previous !== null) loft(faces, start, previous, "leg");
       else first = start;
       previous = start;
@@ -366,6 +411,20 @@ export function buildBody(m: BodyMeasurements, opts: BodyOptions = {}): BodyMesh
   // Hangs slightly away from the body, or it fuses with the torso.
   const armDrop = 0.1;
 
+  /*
+   * The joint rises above the shoulder point, and where it does, the torso is
+   * still narrowing toward the neck — so the deltoid has to be full enough to
+   * still touch it, or the arm floats beside the body with daylight between
+   * the two. Broad shoulders on a narrow neck is the case that pulls them
+   * apart, and it is exactly the case a fixed fraction of the bicep misses.
+   */
+  const capY = shoulderY + 0.012 * H;
+  const torsoAtCap =
+    trapeziusHalf +
+    (shoulderHalf - trapeziusHalf) *
+      ((y("trapezius") - capY) / (y("trapezius") - shoulderY || 1));
+  const capGirth = Math.max(bicep * 0.72, (armX - torsoAtCap + 0.6) * 2 * Math.PI);
+
   for (const side of [-1, 1]) {
     const x0 = side * armX;
     const x1 = side * (armX + armLength * armDrop);
@@ -374,7 +433,7 @@ export function buildBody(m: BodyMeasurements, opts: BodyOptions = {}): BodyMesh
     const levels: [number, number, number, number][] = [
       // [y, circumference, aspect, x] — the first two round the deltoid over
       // the top of the joint rather than leaving a flat-topped cylinder.
-      [shoulderY + 0.022 * H, bicep * 0.62, ASPECT.bicep, x0],
+      [capY, capGirth, ASPECT.bicep, x0],
       [shoulderY, bicep * 1.14, ASPECT.bicep, x0],
       [shoulderY - armLength * 0.28, bicep, ASPECT.bicep, at(0.28)],
       [shoulderY - armLength * 0.52, bicep * 0.84, ASPECT.bicep, at(0.52)],
@@ -387,6 +446,7 @@ export function buildBody(m: BodyMeasurements, opts: BodyOptions = {}): BodyMesh
     for (const [ly, circumference, aspect, lx] of levels) {
       const axes = ellipseAxes(circumference, aspect);
       const start = ring(vertices, ly, axes.a, axes.b, lx, 0);
+      if (side === 1) armSections.push({ y: ly, a: axes.a, b: axes.b, cx: lx });
       if (previous !== null) loft(faces, start, previous, "arm");
       else first = start;
       previous = start;
@@ -432,6 +492,33 @@ export function buildBody(m: BodyMeasurements, opts: BodyOptions = {}): BodyMesh
     vertices,
     faces,
     rings,
+    frame: {
+      torso: torsoSections,
+      leg: legSections,
+      arm: armSections,
+      legOffset,
+      shoulderY: y("shoulder"),
+      crotchY,
+      landmark: {
+        neck: y("neck"),
+        shoulder: y("shoulder"),
+        chest: y("chest"),
+        waist: y("waist"),
+        hip: y("hip"),
+      },
+      // Every position `HemPosition` allows, so a hem never has to fall back
+      // to a default and land a crop top at the hip.
+      hem: {
+        crop: (y("waist") + y("underbust")) / 2,
+        waist: y("waist"),
+        hip: y("hip"),
+        "mid-thigh": legLevels[1][0],
+        knee: legLevels[2][0],
+        midi: (legLevels[2][0] + legLevels[3][0]) / 2,
+        ankle: legLevels[4][0],
+        floor: 0,
+      },
+    },
     height: H,
     estimated,
     confidence: given / asked.length,

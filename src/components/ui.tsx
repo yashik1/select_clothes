@@ -32,7 +32,7 @@ export function Card({
         "shadow-[0_1px_2px_rgba(50,48,47,0.04)]",
         delay !== undefined ? "rise" : "",
         interactive
-          ? "transition-[transform,border-color,box-shadow] duration-200 hover:-translate-y-0.5 hover:border-[#d2ccc2] hover:shadow-[0_10px_30px_-12px_rgba(50,48,47,0.18)]"
+          ? "transition-[transform,border-color,box-shadow] duration-200 ease-[var(--ease-out)] hover:-translate-y-0.5 hover:border-[#d2ccc2] hover:shadow-[0_10px_30px_-12px_rgba(50,48,47,0.18)] active:scale-[0.995]"
           : "",
         className,
       ].join(" ")}
@@ -127,8 +127,12 @@ export function Button({
   variant?: "primary" | "ghost";
   className?: string;
 } & React.ButtonHTMLAttributes<HTMLButtonElement>) {
+  // Named properties rather than `all`: `all` transitions layout too, and the
+  // press has to be instant to read as the button hearing the click.
   const base =
-    "inline-flex items-center justify-center rounded-full px-5 py-2.5 text-sm font-medium transition-all duration-150 active:scale-[0.98] disabled:active:scale-100";
+    "inline-flex items-center justify-center rounded-full px-5 py-2.5 text-sm font-medium " +
+    "transition-[transform,background-color,border-color,color] duration-150 ease-[var(--ease-out)] " +
+    "active:scale-[0.97] disabled:active:scale-100";
   const styles =
     variant === "primary"
       ? "bg-[var(--color-ink)] text-white hover:bg-[var(--color-accent-deep)] disabled:bg-[var(--color-raised)] disabled:text-[var(--color-faint)]"

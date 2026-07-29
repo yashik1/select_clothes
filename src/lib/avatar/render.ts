@@ -6,7 +6,8 @@
  * draws polygons directly rather than pulling in a WebGL engine for a figure
  * that is, geometrically, a stack of tubes.
  */
-import type { BodyMesh, Vec3 } from "./body";
+import type { BodyMesh, Face, Vec3 } from "./body";
+import type { GarmentShell } from "./garment";
 
 export interface Camera {
   /** Radians. 0 faces the viewer; increases turning to their left. */
@@ -58,10 +59,23 @@ export interface RenderOptions {
   theme?: Theme;
   /** Draw and label the measured girths. */
   showRings?: boolean;
+  /** Clothes to draw over the body. */
+  garments?: GarmentShell[];
+  /** 0 = body only, 1 = fully dressed. Anything between cross-fades. */
+  dressed?: number;
   /** Device pixel ratio; the canvas is assumed already scaled by it. */
   width: number;
   height: number;
   unitLabel?: (cm: number) => string;
+}
+
+/** One shaded polygon, resolved far enough to sort against every other. */
+interface Drawn {
+  points: { x: number; y: number }[];
+  depth: number;
+  shade: number;
+  rgb: [number, number, number];
+  alpha: number;
 }
 
 export function renderBody(
@@ -93,61 +107,93 @@ export function renderBody(
     };
   };
 
-  const projected = mesh.vertices.map(project);
-
   // Light from over the viewer's left shoulder, in world space, so it stays
   // put as the body turns — turning toward a fixed light is the cue that sells
   // the rotation as three-dimensional.
   const lx = -0.42, ly = 0.5, lz = 0.76;
 
-  const drawn: { face: number[]; depth: number; shade: number }[] = [];
+  const drawn: Drawn[] = [];
 
-  for (const face of mesh.faces) {
-    const [i0, i1, i2, i3] = face.v;
+  /**
+   * Resolves one mesh into shaded, projected polygons.
+   *
+   * Body and clothes go into a single depth-sorted list rather than being
+   * painted in passes, because a sleeve is in front of the torso from one
+   * angle and behind it from another — layering by draw order alone would be
+   * right half the time.
+   */
+  const collect = (
+    vertices: Vec3[],
+    faces: Face[],
+    rgb: [number, number, number],
+    alpha: number,
+    /**
+     * Pulls a mesh toward the camera when sorting, without moving it on
+     * screen. Cloth and skin are nested surfaces a centimetre apart, and
+     * per-face average depth is too coarse to order them reliably — the
+     * result is the two fighting for the same pixels in stripes. A bias
+     * larger than the standoff settles it, and stays small enough that a
+     * sleeve still sorts correctly against the far side of the torso.
+     */
+    depthBias = 0,
+  ) => {
+    const projected = vertices.map(project);
 
-    // Both visibility and lighting come from the surface normal, so they can
-    // never disagree. Deriving the backface test from screen-space winding
-    // instead would depend on the projection's handedness, and would happily
-    // draw the inside of the far surface of a symmetric body without looking
-    // obviously wrong — until a horizontal face like the top of a shoulder
-    // turns up unlit.
-    const a = mesh.vertices[i0], b = mesh.vertices[i1], c = mesh.vertices[i2];
-    const ux = b.x - a.x, uy = b.y - a.y, uz = b.z - a.z;
-    const vx = c.x - a.x, vy = c.y - a.y, vz = c.z - a.z;
-    let nx = uy * vz - uz * vy;
-    let ny = uz * vx - ux * vz;
-    let nz = ux * vy - uy * vx;
-    const len = Math.hypot(nx, ny, nz) || 1;
-    nx /= len; ny /= len; nz /= len;
+    for (const face of faces) {
+      const [i0, i1, i2, i3] = face.v;
 
-    const rotated = rotate({ x: nx, y: ny, z: nz }, camera.yaw, camera.pitch);
-    if (rotated.z <= 0) continue;
+      // Both visibility and lighting come from the surface normal, so they can
+      // never disagree. Deriving the backface test from screen-space winding
+      // instead would depend on the projection's handedness, and would happily
+      // draw the inside of the far surface of a symmetric body without looking
+      // obviously wrong — until a horizontal face like the top of a shoulder
+      // turns up unlit.
+      const a = vertices[i0], b = vertices[i1], c = vertices[i2];
+      const ux = b.x - a.x, uy = b.y - a.y, uz = b.z - a.z;
+      const vx = c.x - a.x, vy = c.y - a.y, vz = c.z - a.z;
+      let nx = uy * vz - uz * vy;
+      let ny = uz * vx - ux * vz;
+      let nz = ux * vy - uy * vx;
+      const len = Math.hypot(nx, ny, nz) || 1;
+      nx /= len; ny /= len; nz /= len;
 
-    const lambert = Math.max(0, rotated.x * lx + rotated.y * ly + rotated.z * lz);
-    const shade = theme.ambient + (1 - theme.ambient) * lambert;
+      const rotated = rotate({ x: nx, y: ny, z: nz }, camera.yaw, camera.pitch);
+      if (rotated.z <= 0) continue;
 
-    const quad = i2 === i3 ? [i0, i1, i2] : [i0, i1, i2, i3];
-    drawn.push({
-      face: quad,
-      depth: (projected[i0].z + projected[i1].z + projected[i2].z) / 3,
-      shade,
-    });
+      const lambert = Math.max(0, rotated.x * lx + rotated.y * ly + rotated.z * lz);
+      const indices = i2 === i3 ? [i0, i1, i2] : [i0, i1, i2, i3];
+
+      drawn.push({
+        points: indices.map((i) => projected[i]),
+        depth: (projected[i0].z + projected[i1].z + projected[i2].z) / 3 + depthBias,
+        shade: theme.ambient + (1 - theme.ambient) * lambert,
+        rgb,
+        alpha,
+      });
+    }
+  };
+
+  collect(mesh.vertices, mesh.faces, theme.skin, 1);
+
+  const dressed = options.dressed ?? 1;
+  if (options.garments?.length && dressed > 0.01) {
+    for (const shell of options.garments) {
+      collect(shell.vertices, shell.faces, hexToRgb(shell.hex), dressed, 3 + shell.layer * 1.2);
+    }
   }
 
-  // Painter's algorithm. The body is close enough to convex that per-face
+  // Painter's algorithm. The figure is close enough to convex that per-face
   // depth sorting resolves it without a z-buffer.
   drawn.sort((p, q) => p.depth - q.depth);
 
-  const [sr, sg, sb] = theme.skin;
-  for (const { face, shade } of drawn) {
+  for (const { points, shade, rgb, alpha } of drawn) {
     ctx.beginPath();
-    ctx.moveTo(projected[face[0]].x, projected[face[0]].y);
-    for (let i = 1; i < face.length; i++) {
-      ctx.lineTo(projected[face[i]].x, projected[face[i]].y);
-    }
+    ctx.moveTo(points[0].x, points[0].y);
+    for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
     ctx.closePath();
 
-    const fill = `rgb(${Math.round(sr * shade)},${Math.round(sg * shade)},${Math.round(sb * shade)})`;
+    const fill = `rgb(${Math.round(rgb[0] * shade)},${Math.round(rgb[1] * shade)},${Math.round(rgb[2] * shade)})`;
+    ctx.globalAlpha = alpha;
     ctx.fillStyle = fill;
     // Stroking each face in its own fill colour hides the hairline seams that
     // antialiasing leaves between adjacent polygons.
@@ -156,6 +202,7 @@ export function renderBody(
     ctx.fill();
     ctx.stroke();
   }
+  ctx.globalAlpha = 1;
 
   if (options.showRings) drawRings(ctx, mesh, options, project, theme);
 }
@@ -233,4 +280,11 @@ function drawRings(
   }
 
   ctx.restore();
+}
+
+function hexToRgb(hex: string): [number, number, number] {
+  const clean = hex.replace("#", "");
+  const full = clean.length === 3 ? clean.split("").map((c) => c + c).join("") : clean;
+  const n = parseInt(full, 16);
+  return Number.isNaN(n) ? [140, 136, 130] : [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }

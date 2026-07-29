@@ -56,7 +56,8 @@ and today's forecast, each with the reason it's ranked where it is.
 
 **Wardrobe** — items with a per-garment fit report: your measurement, the
 garment's, the room between them, and a verdict per landmark. A live fit preview
-runs *as you type* while adding an item.
+runs *as you type* while adding an item, and **On you** hangs the piece on the
+same figure the You page builds — see below.
 
 **Studio** — build a combination and watch six dimensions score it in real time,
 with the specific tweak that would fix each problem.
@@ -73,6 +74,26 @@ what the app has learned about how each brand sizes on you.
 **You** — measurements, colouring, fit preferences, and a figure built from
 your girths that you can turn through 360° and tilt to see from any side. Body
 shape and seasonal palette derive live as you type, both overridable.
+
+### Seeing the fit instead of reading it
+
+Open any garment and the same figure is wearing it. The shell is built from
+*that garment's* measurements — chest flat doubled, waist flat doubled, body
+length from the high point of the shoulder — stacked at the landmark heights of
+*your* body. So the gap between cloth and skin **is** the ease: the number in
+the room column of the table above it, drawn rather than tabulated, and you can
+walk around it.
+
+Where a garment is narrower than you it moulds on rather than passing through,
+because that is what fabric does — so "too tight" reads as a shell pressed onto
+the body and "oversized" as one standing well off it, without either needing a
+label. Anything you haven't measured falls back to the middle of that
+subcategory's ideal ease band, and the caption says which. Accessories and bags
+have no honest shape on a mannequin, so they're named beside the figure rather
+than drawn badly on it.
+
+It is the same renderer as the You page, drawing into the same 2D canvas — no
+WebGL, no model, nothing fetched.
 
 ---
 
@@ -238,20 +259,21 @@ src/lib/
   engine/calibration.ts    per-brand fit learning
   engine/insights.ts       wardrobe analytics
   avatar/body.ts           the figure: measurements lofted into a mesh
+  avatar/garment.ts        clothes built from their own measurements, hung on it
   avatar/render.ts         software renderer — projection, shading, girth bands
   auth.ts                  scrypt passwords, session tokens
   db.ts                    Postgres: schema, queries, image bytes
   tryon.ts                 pluggable render providers
 src/app/                   Next.js App Router pages and API routes
 src/components/            UI, including client-side colour extraction
-tests/                     104 tests over the engines, auth and geometry
+tests/                     122 tests over the engines, auth and geometry
 ```
 
 ## Development
 
 ```bash
 npm run dev        # dev server
-npm test           # 104 tests
+npm test           # 122 tests
 npm run typecheck  # tsc --noEmit
 npm run build      # production build
 npm run seed       # reset to the demo wardrobe (--force if not empty)

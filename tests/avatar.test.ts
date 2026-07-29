@@ -1,8 +1,10 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 
-import { buildBody, ellipseAxes, type BodyMesh } from "../src/lib/avatar/body.ts";
-import type { BodyMeasurements } from "../src/lib/types.ts";
+import { buildBody, ellipseAxes, type BodyMesh, type Face, type Vec3 } from "../src/lib/avatar/body.ts";
+import { buildGarments, type GarmentShell } from "../src/lib/avatar/garment.ts";
+import { SUBCATEGORY_LIST } from "../src/lib/data/garmentTypes.ts";
+import type { BodyMeasurements, Garment, GarmentMeasurements } from "../src/lib/types.ts";
 
 const FULL: BodyMeasurements = {
   height: 174, chest: 98, waistNatural: 84, hip: 100, neck: 39,
@@ -204,5 +206,286 @@ describe("mesh orientation", () => {
       volume > 30_000 && volume < 160_000,
       `implausible volume ${(volume / 1000).toFixed(1)} litres`,
     );
+  });
+});
+
+/*
+ * Clothes on the body.
+ *
+ * The demo wardrobe is menswear, so eyeballing it exercises maybe a third of
+ * the catalogue and never touches a dress. These sweep every subcategory that
+ * exists, because the failures are geometric — a hem below the floor, a shell
+ * wound inside out, a band of zero-area faces where two stops collided — and
+ * all of them look fine until the one garment that triggers them is opened.
+ */
+describe("garments on the body", () => {
+  const mesh = buildBody(FULL);
+  const { frame } = mesh;
+
+  const garment = (
+    subcategory: string,
+    category: Garment["category"],
+    measurements: GarmentMeasurements = {},
+  ): Garment => ({
+    id: `g-${subcategory}`,
+    name: subcategory,
+    category,
+    subcategory,
+    colors: [{ hex: "#3b4a6b", share: 1 }],
+    pattern: "solid",
+    patternScale: "medium",
+    fabric: { cotton: 1 },
+    formality: 3,
+    fitIntent: "regular",
+    measurements,
+    seasons: ["spring"],
+    careState: "clean",
+    imageIds: [],
+    wearCount: 0,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  });
+
+  const shellsOf = (g: Garment) => buildGarments(frame, [g]).shells;
+
+  /** Signed volume by the divergence theorem; negative means inside out. */
+  const volumeOf = (s: { vertices: Vec3[]; faces: Face[] }) => {
+    let volume = 0;
+    for (const f of s.faces) {
+      const tris =
+        f.v[2] === f.v[3]
+          ? [[f.v[0], f.v[1], f.v[2]]]
+          : [[f.v[0], f.v[1], f.v[2]], [f.v[0], f.v[2], f.v[3]]];
+      for (const [i, j, k] of tris) {
+        const a = s.vertices[i], b = s.vertices[j], c = s.vertices[k];
+        volume +=
+          (a.x * (b.y * c.z - b.z * c.y) -
+            a.y * (b.x * c.z - b.z * c.x) +
+            a.z * (b.x * c.y - b.y * c.x)) / 6;
+      }
+    }
+    return volume;
+  };
+
+  const WORN = ["top", "bottom", "dress", "outerwear", "shoes"] as const;
+
+  test("every wearable subcategory in the catalogue produces a shell", () => {
+    const missing: string[] = [];
+    for (const def of SUBCATEGORY_LIST) {
+      if (!WORN.includes(def.category as (typeof WORN)[number])) continue;
+      if (!shellsOf(garment(def.key, def.category)).length) missing.push(def.key);
+    }
+    assert.deepEqual(missing, [], `no shape drawn for: ${missing.join(", ")}`);
+  });
+
+  test("accessories and bags are reported, not silently dropped", () => {
+    for (const def of SUBCATEGORY_LIST) {
+      if (def.category !== "accessory" && def.category !== "bag") continue;
+      const { shells, skipped } = buildGarments(frame, [garment(def.key, def.category)]);
+      assert.equal(shells.length, 0, `${def.key} drew something`);
+      assert.equal(skipped.length, 1, `${def.key} vanished without a reason`);
+      assert.match(skipped[0].reason, /not worn on the body/);
+    }
+  });
+
+  test("no shell has a broken vertex or a zero-area face", () => {
+    for (const def of SUBCATEGORY_LIST) {
+      for (const shell of shellsOf(garment(def.key, def.category))) {
+        for (const v of shell.vertices) {
+          assert.ok(
+            Number.isFinite(v.x) && Number.isFinite(v.y) && Number.isFinite(v.z),
+            `${def.key} has a non-finite vertex`,
+          );
+        }
+        for (const f of shell.faces) {
+          const [a, b, c] = [shell.vertices[f.v[0]], shell.vertices[f.v[1]], shell.vertices[f.v[2]]];
+          const ux = b.x - a.x, uy = b.y - a.y, uz = b.z - a.z;
+          const vx = c.x - a.x, vy = c.y - a.y, vz = c.z - a.z;
+          const len = Math.hypot(
+            uy * vz - uz * vy,
+            uz * vx - ux * vz,
+            ux * vy - uy * vx,
+          );
+          assert.ok(len > 1e-9, `${def.key} has a zero-area face`);
+        }
+      }
+    }
+  });
+
+  /*
+   * The renderer culls and lights from the face normal, so a shell wound the
+   * wrong way is drawn from the inside — the same class of bug that made the
+   * body's neck a black band.
+   */
+  test("every shell is wound outward and encloses a sane volume", () => {
+    for (const def of SUBCATEGORY_LIST) {
+      for (const shell of shellsOf(garment(def.key, def.category))) {
+        const v = volumeOf(shell);
+        assert.ok(v > 0, `${def.key} is inside out (${v.toFixed(0)}cm³)`);
+        // A sleeve is a couple of litres; a floor-length coat is tens.
+        assert.ok(v < 400_000, `${def.key} encloses ${(v / 1000).toFixed(0)} litres`);
+      }
+    }
+  });
+
+  test("nothing is drawn below the floor or above the head", () => {
+    for (const def of SUBCATEGORY_LIST) {
+      for (const shell of shellsOf(garment(def.key, def.category))) {
+        for (const v of shell.vertices) {
+          assert.ok(v.y >= -0.01, `${def.key} falls through the floor (y=${v.y.toFixed(1)})`);
+          assert.ok(v.y <= mesh.height, `${def.key} rises past the crown (y=${v.y.toFixed(1)})`);
+        }
+      }
+    }
+  });
+
+  test("a hem sits where the subcategory says it does", () => {
+    for (const def of SUBCATEGORY_LIST) {
+      if (!def.hem || !WORN.includes(def.category as (typeof WORN)[number])) continue;
+      const expected = frame.hem[def.hem];
+      assert.equal(typeof expected, "number", `no height defined for hem "${def.hem}"`);
+
+      const shells = shellsOf(garment(def.key, def.category));
+      // Sleeves and shoes end where the limb does, so the hem rule is about
+      // the lowest point of the piece covering the body — which is the lowest
+      // point overall for everything the rule applies to.
+      const lowest = Math.min(...shells.flatMap((s) => s.vertices.map((v) => v.y)));
+      assert.ok(
+        Math.abs(lowest - expected) < 6,
+        `${def.key} hems at ${lowest.toFixed(1)} but "${def.hem}" is ${expected.toFixed(1)}`,
+      );
+    }
+  });
+
+  test("cloth moulds onto the body rather than passing through it", () => {
+    // A chest measurement far smaller than the wearer: the shell must still
+    // come out wider than the body, which is how "too tight" reads.
+    const tiny = garment("t-shirt", "top", { chestFlat: 20, waistFlat: 20 });
+    const chest = frame.torso.find((s) => Math.abs(s.y - frame.landmark.chest) < 0.5)!;
+    const shell = shellsOf(tiny)[0];
+    const widest = Math.max(...shell.vertices.map((v) => Math.abs(v.x)));
+    assert.ok(
+      widest > chest.a,
+      `a 40cm chest drew ${widest.toFixed(1)}cm across a ${chest.a.toFixed(1)}cm body`,
+    );
+  });
+
+  test("a roomier garment really is drawn roomier", () => {
+    const spread = (g: Garment) => {
+      const s = shellsOf(g)[0];
+      return Math.max(...s.vertices.map((v) => Math.abs(v.x)));
+    };
+    const slim = spread(garment("t-shirt", "top", { chestFlat: 50 }));
+    const loose = spread(garment("t-shirt", "top", { chestFlat: 65 }));
+    assert.ok(loose > slim + 3, `30cm more chest moved the shell by ${(loose - slim).toFixed(1)}cm`);
+  });
+
+  test("measured garments are not flagged as estimated, and unmeasured ones are", () => {
+    const bare = buildGarments(frame, [garment("sweater", "top")]);
+    assert.deepEqual(bare.estimated, ["sweater"]);
+
+    const measured = buildGarments(frame, [
+      garment("sweater", "top", { chestFlat: 56, waistFlat: 52 }),
+    ]);
+    assert.deepEqual(measured.estimated, []);
+  });
+
+  test("sleeves are drawn on both sides, and only when there are sleeves", () => {
+    const sleeveless = shellsOf(garment("t-shirt", "top", { chestFlat: 54 }));
+    const sleeved = shellsOf(garment("sweater", "top", { chestFlat: 56, sleeveLength: 62 }));
+    assert.equal(sleeveless.length, 1, "a garment with no sleeve length grew sleeves");
+    assert.equal(sleeved.length, 3, "expected a body and two sleeves");
+
+    const [left, right] = sleeved.slice(1).map((s: GarmentShell) =>
+      s.vertices.reduce((sum, v) => sum + v.x, 0) / s.vertices.length,
+    );
+    assert.ok(left * right < 0, "both sleeves are on the same side");
+    assert.ok(Math.abs(Math.abs(left) - Math.abs(right)) < 0.01, "sleeves are asymmetric");
+  });
+
+  test("trousers get a seat and two legs; shorts stop above the knee", () => {
+    const jeans = shellsOf(garment("jeans", "bottom", { waistFlat: 42, inseam: 79 }));
+    assert.equal(jeans.length, 3, "expected a seat and two legs");
+    const hem = Math.min(...jeans.flatMap((s) => s.vertices.map((v) => v.y)));
+    assert.ok(Math.abs(hem - (frame.crotchY - 79)) < 1, `a 79cm inseam hemmed at ${hem.toFixed(1)}`);
+
+    const shorts = shellsOf(garment("shorts", "bottom", { waistFlat: 42, inseam: 18 }));
+    const shortHem = Math.min(...shorts.flatMap((s) => s.vertices.map((v) => v.y)));
+    assert.ok(shortHem > frame.hem.knee, `shorts hemmed at ${shortHem.toFixed(1)}, below the knee`);
+  });
+
+  test("layers sort so outerwear ends up over the shirt", () => {
+    const { shells } = buildGarments(frame, [
+      garment("wool-coat", "outerwear", { chestFlat: 60 }),
+      garment("t-shirt", "top", { chestFlat: 52 }),
+    ]);
+    const layers = shells.map((s) => s.layer);
+    assert.deepEqual(layers, [...layers].sort((a, b) => a - b), "shells are out of layer order");
+    assert.ok(layers[0] < layers[layers.length - 1], "a coat and a tee landed on the same layer");
+  });
+
+  test("a body with nothing measured still dresses without breaking", () => {
+    const bare = buildBody({});
+    for (const def of SUBCATEGORY_LIST) {
+      for (const shell of buildGarments(bare.frame, [garment(def.key, def.category)]).shells) {
+        for (const v of shell.vertices) {
+          assert.ok(
+            Number.isFinite(v.x) && Number.isFinite(v.y) && Number.isFinite(v.z),
+            `${def.key} broke on an empty profile`,
+          );
+        }
+      }
+    }
+  });
+});
+
+/*
+ * The shoulder is where the figure and the clothes both have to be right: it
+ * is the one joint where two separate tubes have to read as one body, and a
+ * gap there shows as daylight between the neck and the arm — then again as a
+ * hole in every sleeve hung over it.
+ */
+describe("the shoulder joins up", () => {
+  const frames = [
+    buildBody(FULL).frame,
+    buildBody({}).frame,
+    // Broad shoulders on a narrow neck is the case that pulls them apart.
+    buildBody({ ...FULL, shoulderWidth: 52, neck: 34 }).frame,
+    buildBody({ ...FULL, shoulderWidth: 38, neck: 42 }).frame,
+  ];
+
+  /** The torso's half-width at an arbitrary height. */
+  const torsoAt = (frame: (typeof frames)[number], y: number) => {
+    const sorted = [...frame.torso].sort((p, q) => p.y - q.y);
+    for (let i = 1; i < sorted.length; i++) {
+      if (y <= sorted[i].y) {
+        const lo = sorted[i - 1], hi = sorted[i];
+        const t = (y - lo.y) / (hi.y - lo.y || 1);
+        return lo.a + (hi.a - lo.a) * t;
+      }
+    }
+    return sorted[sorted.length - 1].a;
+  };
+
+  test("the arm meets the torso rather than floating beside it", () => {
+    for (const frame of frames) {
+      const top = frame.arm[0];
+      const inner = top.cx - top.a;
+      const torso = torsoAt(frame, top.y);
+      assert.ok(
+        torso >= inner,
+        `daylight between torso (${torso.toFixed(1)}) and arm (${inner.toFixed(1)}) at y=${top.y.toFixed(1)}`,
+      );
+    }
+  });
+
+  test("a sleeve reaches high enough to cover the joint", () => {
+    for (const frame of frames) {
+      // The arm's own topmost section is where a sleeve has to start; if the
+      // body's arm rose above it there would be bare skin above every cuff.
+      const highest = Math.max(...frame.arm.map((s) => s.y));
+      assert.equal(frame.arm[0].y, highest, "the arm's first section isn't its top");
+      assert.ok(frame.arm[0].y > frame.shoulderY, "the joint doesn't rise above the shoulder point");
+    }
   });
 });

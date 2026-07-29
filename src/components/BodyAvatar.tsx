@@ -2,9 +2,10 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { buildBody } from "@/lib/avatar/body";
+import { buildGarments } from "@/lib/avatar/garment";
 import { renderBody, type Camera } from "@/lib/avatar/render";
 import { formatLength } from "@/lib/units";
-import type { BodyMeasurements, Unit } from "@/lib/types";
+import type { BodyMeasurements, Garment, Unit } from "@/lib/types";
 
 const VIEWS: { label: string; yaw: number; pitch: number }[] = [
   { label: "Front", yaw: 0, pitch: 0 },
@@ -15,22 +16,73 @@ const VIEWS: { label: string; yaw: number; pitch: number }[] = [
 
 const MAX_PITCH = 1.05;
 
+/*
+ * Every control here is pressed repeatedly while comparing views, so they get
+ * press feedback but no entrance animation — the scale is instant confirmation
+ * the click landed, and anything longer would be in the way by the third tap.
+ */
+const PILL =
+  "rounded-full border px-3 py-1 text-xs transition-[transform,background-color,border-color,color] " +
+  "duration-150 ease-[var(--ease-out)] active:scale-[0.97]";
+const PILL_OFF =
+  "border-[var(--color-line)] bg-[var(--color-paper)] text-[var(--color-muted)] hover:border-[var(--color-ink)] hover:text-[var(--color-text)]";
+const PILL_ON = "border-[var(--color-ink)] bg-[var(--color-ink)] text-white";
+
 export function BodyAvatar({
   measurements,
   unit = "cm",
   height = 460,
+  garments,
+  showMeasurementsByDefault,
 }: {
   measurements: BodyMeasurements;
   unit?: Unit;
   height?: number;
+  /** Clothes to put on the figure. Omit for the bare measurement view. */
+  garments?: Garment[];
+  showMeasurementsByDefault?: boolean;
 }) {
+  const dressable = Boolean(garments?.length);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  // Springs keep velocity when interrupted; this is the same idea in miniature.
+  // Toggling mid-fade resumes from the current value instead of snapping.
+  const dressedRef = useRef(dressable ? 1 : 0);
   const [camera, setCamera] = useState<Camera>({ yaw: -Math.PI / 9, pitch: 0.06, zoom: 1 });
-  const [showRings, setShowRings] = useState(true);
+  const [showRings, setShowRings] = useState(showMeasurementsByDefault ?? !dressable);
   const [spinning, setSpinning] = useState(false);
+  const [wearing, setWearing] = useState(true);
 
   // Rebuilt only when a measurement actually changes, so dragging stays cheap.
   const mesh = useMemo(() => buildBody(measurements), [measurements]);
+  const clothes = useMemo(
+    () => (garments?.length ? buildGarments(mesh.frame, garments) : null),
+    [mesh.frame, garments],
+  );
+
+  /*
+   * Dressing cross-fades rather than popping. It is a state change the user
+   * asked for, so it earns motion — but at 220ms, because they will toggle it
+   * repeatedly to compare, and anything slower starts to feel like waiting.
+   */
+  const [dressed, setDressed] = useState(dressable ? 1 : 0);
+  useEffect(() => {
+    if (!dressable) return;
+    const target = wearing ? 1 : 0;
+    let frame = 0;
+    const start = performance.now();
+    const from = dressedRef.current;
+    const step = (now: number) => {
+      const t = Math.min(1, (now - start) / 220);
+      // Strong ease-out: the movement is over before the eye starts waiting.
+      const eased = 1 - Math.pow(1 - t, 3);
+      const value = from + (target - from) * eased;
+      dressedRef.current = value;
+      setDressed(value);
+      if (t < 1) frame = requestAnimationFrame(step);
+    };
+    frame = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(frame);
+  }, [wearing, dressable]);
 
   /* ------------------------------------------------------------- draw -- */
   useEffect(() => {
@@ -50,9 +102,11 @@ export function BodyAvatar({
       width: cssWidth,
       height,
       showRings,
+      garments: clothes?.shells,
+      dressed,
       unitLabel: (cm) => formatLength(cm, unit),
     });
-  }, [mesh, camera, showRings, height, unit]);
+  }, [mesh, clothes, dressed, camera, showRings, height, unit]);
 
   /* ---------------------------------------------------------- spinning -- */
   useEffect(() => {
@@ -143,7 +197,7 @@ export function BodyAvatar({
               setSpinning(false);
               setCamera((c) => ({ ...c, yaw: v.yaw, pitch: v.pitch }));
             }}
-            className="rounded-full border border-[var(--color-line)] bg-[var(--color-paper)] px-3 py-1 text-xs text-[var(--color-muted)] transition-colors hover:border-[var(--color-ink)] hover:text-[var(--color-text)]"
+            className={`${PILL} ${PILL_OFF}`}
           >
             {v.label}
           </button>
@@ -152,23 +206,25 @@ export function BodyAvatar({
         <button
           onClick={() => setSpinning((s) => !s)}
           aria-pressed={spinning}
-          className={`rounded-full border px-3 py-1 text-xs transition-colors ${
-            spinning
-              ? "border-[var(--color-ink)] bg-[var(--color-ink)] text-white"
-              : "border-[var(--color-line)] bg-[var(--color-paper)] text-[var(--color-muted)] hover:border-[var(--color-ink)] hover:text-[var(--color-text)]"
-          }`}
+          className={`${PILL} ${spinning ? PILL_ON : PILL_OFF}`}
         >
           {spinning ? "Stop" : "Spin"}
         </button>
 
+        {dressable && (
+          <button
+            onClick={() => setWearing((w) => !w)}
+            aria-pressed={wearing}
+            className={`${PILL} ${wearing ? PILL_ON : PILL_OFF}`}
+          >
+            Wearing
+          </button>
+        )}
+
         <button
           onClick={() => setShowRings((s) => !s)}
           aria-pressed={showRings}
-          className={`rounded-full border px-3 py-1 text-xs transition-colors ${
-            showRings
-              ? "border-[var(--color-ink)] bg-[var(--color-ink)] text-white"
-              : "border-[var(--color-line)] bg-[var(--color-paper)] text-[var(--color-muted)] hover:border-[var(--color-ink)] hover:text-[var(--color-text)]"
-          }`}
+          className={`${PILL} ${showRings ? PILL_ON : PILL_OFF}`}
         >
           Measurements
         </button>
@@ -177,14 +233,14 @@ export function BodyAvatar({
           <button
             onClick={() => setCamera((c) => ({ ...c, zoom: Math.max(0.6, c.zoom - 0.15) }))}
             aria-label="Zoom out"
-            className="rounded-full border border-[var(--color-line)] bg-[var(--color-paper)] px-2.5 py-1 text-xs text-[var(--color-muted)] hover:border-[var(--color-ink)] hover:text-[var(--color-text)]"
+            className={`${PILL} ${PILL_OFF} px-2.5`}
           >
             −
           </button>
           <button
             onClick={() => setCamera((c) => ({ ...c, zoom: Math.min(2.2, c.zoom + 0.15) }))}
             aria-label="Zoom in"
-            className="rounded-full border border-[var(--color-line)] bg-[var(--color-paper)] px-2.5 py-1 text-xs text-[var(--color-muted)] hover:border-[var(--color-ink)] hover:text-[var(--color-text)]"
+            className={`${PILL} ${PILL_OFF} px-2.5`}
           >
             +
           </button>
@@ -192,6 +248,25 @@ export function BodyAvatar({
       </div>
 
       <p className="mt-2.5 text-xs leading-relaxed text-[var(--color-faint)]">
+        {dressable ? (
+          <>
+            Drag to turn it. The clothes are drawn from their own measurements on
+            your body, so the gap between cloth and skin <em>is</em> the ease —
+            where a garment is narrower than you it moulds on rather than passing
+            through.{" "}
+            {clothes?.estimated.length ? (
+              <span className="text-[var(--color-warn)]">
+                {clothes.estimated.length === 1
+                  ? `${clothes.estimated[0]} hasn't been measured, so it's drawn at this type's usual ease.`
+                  : `${clothes.estimated.length} of these haven't been measured, so they're drawn at their type's usual ease.`}{" "}
+              </span>
+            ) : null}
+            {clothes?.skipped.length ? (
+              <>Not shown: {clothes.skipped.map((s) => s.name).join(", ")}.</>
+            ) : null}
+          </>
+        ) : (
+          <>
         Drag to turn it, or use the arrow keys. Every band is a measurement you
         entered, drawn at the height that landmark sits at.{" "}
         {missing > 0 ? (
@@ -208,6 +283,8 @@ export function BodyAvatar({
         )}{" "}
         A girth says how far around you are, not what shape you are, so treat it as a tailor&apos;s
         dummy rather than a portrait.
+          </>
+        )}
       </p>
     </div>
   );

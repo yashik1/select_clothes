@@ -48,6 +48,18 @@
 
   --font-display: var(--font-serif), ui-serif, Georgia, serif;
   --font-body: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+
+  /*
+   * The built-in CSS easings are too weak to read as deliberate. These are the
+   * standard strong variants: `out` for anything entering or leaving, because
+   * it moves immediately and the eye never waits; `in-out` for something
+   * travelling across the screen, which needs to accelerate and settle.
+   *
+   * There is deliberately no ease-in. It withholds movement at exactly the
+   * moment the user is watching hardest, so the same duration feels slower.
+   */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
 }
 
 :root {
@@ -81,11 +93,17 @@ body {
 @keyframes rise {
   from {
     opacity: 0;
-    transform: translateY(12px);
+    transform: translateY(10px);
   }
   to {
     opacity: 1;
     transform: none;
+  }
+}
+
+@keyframes fade {
+  from {
+    opacity: 0;
   }
 }
 
@@ -95,8 +113,14 @@ body {
   }
 }
 
+/*
+ * Content settling in on arrival. Kept under 300ms: this is a page someone
+ * navigates back to several times a session, and past that it stops reading as
+ * responsiveness and starts reading as a wait. Cards stagger, so the last one
+ * in a row still lands well inside a quarter of a second.
+ */
 .rise {
-  animation: rise 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: rise 260ms var(--ease-out) both;
   animation-delay: var(--delay, 0ms);
 }
 
@@ -118,7 +142,7 @@ textarea {
   font-family: var(--font-body);
   font-size: 0.9375rem;
   width: 100%;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: border-color 150ms var(--ease-out), box-shadow 150ms var(--ease-out);
 }
 
 input:hover,
@@ -178,11 +202,26 @@ label {
   background: #c2bbaf;
 }
 
+/*
+ * Reduced motion means less movement, not less feedback. Cutting every
+ * transition to nothing takes the colour and opacity changes with it, and the
+ * interface stops acknowledging hover, focus and press at all — which is a
+ * worse experience, not an accessible one. So: transforms and travel go,
+ * everything that only changes appearance stays.
+ */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
   *::after {
     animation-duration: 0.01ms !important;
-    transition-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-property: opacity, color, background-color, border-color, fill, stroke,
+      box-shadow !important;
+    transition-duration: 150ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .rise {
+    animation: fade 200ms linear both;
   }
 }
