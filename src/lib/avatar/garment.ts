@@ -17,12 +17,16 @@
  * rather than invented — and the caller is told which garments those were.
  */
 import type { Garment, GarmentMeasurements } from "../types";
-import { subcategoryDef } from "../data/garmentTypes";
+import { assumedSleeveLength, subcategoryDef } from "../data/garmentTypes";
 import { ellipseAxes, type BodyFrame, type Face, type Section, type Vec3 } from "./body";
+
+/** Which piece of the garment a shell is — a sleeve is not a hem. */
+export type ShellPart = "body" | "sleeve" | "leg" | "shoe";
 
 export interface GarmentShell {
   vertices: Vec3[];
   faces: Face[];
+  part: ShellPart;
   /** Base colour, straight from the garment. */
   hex: string;
   garmentId: string;
@@ -185,6 +189,7 @@ function shellFromStops(
   garment: Garment,
   layer: number,
   estimated: boolean,
+  part: ShellPart,
 ): GarmentShell | null {
   const usable = stops.filter((s) => Number.isFinite(s.y) && s.circumference > 0);
   usable.sort((p, q) => q.y - p.y); // top-down
@@ -267,6 +272,7 @@ function shellFromStops(
   return {
     vertices,
     faces,
+    part,
     hex: garment.colors?.[0]?.hex ?? "#8a8681",
     garmentId: garment.id,
     name: garment.name,
@@ -327,12 +333,24 @@ function shellsFor(garment: Garment, frame: BodyFrame): GarmentShell[] {
     ].filter((s) => s.y >= bottomY - 0.01);
 
     const shells: GarmentShell[] = [];
-    const body = shellFromStops(stops, frame, torso, 1, garment, layer, !measured);
+    const body = shellFromStops(stops, frame, torso, 1, garment, layer, !measured, "body");
     if (body) shells.push(body);
 
-    // Sleeves, when the garment records a length worth drawing.
-    const sleeve = typeof m.sleeveLength === "number" ? m.sleeveLength : null;
-    if (sleeve && sleeve > 12 && frame.arm.length) {
+    /*
+     * Sleeves. A recorded length wins; otherwise the type's own rule against
+     * this body's arm, because "no sleeve length typed in" is not the same
+     * claim as "sleeveless" — reading it that way drew every unmeasured
+     * jumper, shirt and coat as a gilet.
+     */
+    const armLength = frame.arm.length
+      ? frame.shoulderY - frame.arm[frame.arm.length - 1].y
+      : 0;
+    const sleeve =
+      typeof m.sleeveLength === "number" && m.sleeveLength > 0
+        ? m.sleeveLength
+        : assumedSleeveLength(def, armLength);
+
+    if (sleeve > 6 && frame.arm.length) {
       // Over the top of the joint, not down from the shoulder seam: starting at
       // the seam left the deltoid bare through the armhole. Length is still
       // measured from the seam, which is where a tape starts.
@@ -370,7 +388,7 @@ function shellsFor(garment: Garment, frame: BodyFrame): GarmentShell[] {
           armStops.push({ y, circumference: girth(s.a, s.b) + 5.5 - t * 3.5 });
         }
 
-        const arm = shellFromStops(armStops, frame, frame.arm, side, garment, layer, !measured);
+        const arm = shellFromStops(armStops, frame, frame.arm, side, garment, layer, !measured, "sleeve");
         if (arm) shells.push(arm);
       }
     }
@@ -406,6 +424,7 @@ function shellsFor(garment: Garment, frame: BodyFrame): GarmentShell[] {
       garment,
       layer,
       !measured,
+      "body",
     );
 
     const shells: GarmentShell[] = seat ? [seat] : [];
@@ -425,7 +444,7 @@ function shellsFor(garment: Garment, frame: BodyFrame): GarmentShell[] {
             : bodyC + idealEase(def, "thighFlat") * (1 - t * 0.4);
           stops.push({ y, circumference: Math.max(target, bodyC + 1) });
         }
-        const leg = shellFromStops(stops, frame, frame.leg, side, garment, layer, !measured);
+        const leg = shellFromStops(stops, frame, frame.leg, side, garment, layer, !measured, "leg");
         if (leg) shells.push(leg);
       }
     }
@@ -451,6 +470,7 @@ function shellsFor(garment: Garment, frame: BodyFrame): GarmentShell[] {
         garment,
         LAYER_ORDER.feet,
         true,
+        "shoe",
       );
       if (shoe) shells.push(shoe);
     }

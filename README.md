@@ -98,6 +98,12 @@ length from the high point of the shoulder — stacked at the landmark heights o
 the room column of the table above it, drawn rather than tabulated, and you can
 walk around it.
 
+Sleeves come from the catalogue when you haven't measured them: eighteen types
+carry a sleeve rule off your arm length, and the nine that don't — t-shirt,
+polo, tank, gilet, the dresses — say outright how far down the arm they reach.
+"No sleeve length recorded" is not the same claim as "sleeveless", and reading
+it that way drew every unmeasured jumper, shirt and coat as a gilet.
+
 Where a garment is narrower than you it moulds on rather than passing through,
 because that is what fabric does — so "too tight" reads as a shell pressed onto
 the body and "oversized" as one standing well off it, without either needing a
@@ -292,14 +298,14 @@ src/lib/
   tryon.ts                 pluggable render providers
 src/app/                   Next.js App Router pages and API routes
 src/components/            UI, including client-side colour extraction
-tests/                     163 tests over the engines, auth and geometry
+tests/                     171 tests over the engines, auth and geometry
 ```
 
 ## Development
 
 ```bash
 npm run dev        # dev server
-npm test           # 163 tests
+npm test           # 171 tests
 npm run typecheck  # tsc --noEmit
 npm run build      # production build
 npm run seed       # reset to the demo wardrobe (--force if not empty)

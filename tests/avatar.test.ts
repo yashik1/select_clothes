@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 import { buildBody, ellipseAxes, type BodyMesh, type Face, type Vec3 } from "../src/lib/avatar/body.ts";
 import { buildGarments, type GarmentShell } from "../src/lib/avatar/garment.ts";
-import { SUBCATEGORY_LIST } from "../src/lib/data/garmentTypes.ts";
+import { SUBCATEGORY_LIST, assumedSleeveLength, sleeveKind } from "../src/lib/data/garmentTypes.ts";
 import type { BodyMeasurements, Garment, GarmentMeasurements } from "../src/lib/types.ts";
 
 const FULL: BodyMeasurements = {
@@ -345,10 +345,9 @@ describe("garments on the body", () => {
       const expected = frame.hem[def.hem];
       assert.equal(typeof expected, "number", `no height defined for hem "${def.hem}"`);
 
-      const shells = shellsOf(garment(def.key, def.category));
-      // Sleeves and shoes end where the limb does, so the hem rule is about
-      // the lowest point of the piece covering the body — which is the lowest
-      // point overall for everything the rule applies to.
+      // The hem rule is about the piece covering the body. A sleeve ends at
+      // the wrist, well below a hip hem, so counting it measures the cuff.
+      const shells = shellsOf(garment(def.key, def.category)).filter((s) => s.part !== "sleeve");
       const lowest = Math.min(...shells.flatMap((s) => s.vertices.map((v) => v.y)));
       assert.ok(
         Math.abs(lowest - expected) < 6,
@@ -390,15 +389,17 @@ describe("garments on the body", () => {
     assert.deepEqual(measured.estimated, []);
   });
 
-  test("sleeves are drawn on both sides, and only when there are sleeves", () => {
-    const sleeveless = shellsOf(garment("t-shirt", "top", { chestFlat: 54 }));
+  test("sleeves are drawn on both sides, and only where the type has them", () => {
+    // A missing sleeve measurement used to mean "no sleeves", which drew every
+    // unmeasured jumper as a gilet. It now means "the length this type
+    // usually is" — and only a genuinely sleeveless type gets none.
     const sleeved = shellsOf(garment("sweater", "top", { chestFlat: 56, sleeveLength: 62 }));
-    assert.equal(sleeveless.length, 1, "a garment with no sleeve length grew sleeves");
     assert.equal(sleeved.length, 3, "expected a body and two sleeves");
+    assert.equal(shellsOf(garment("tank", "top", { chestFlat: 50 })).length, 1, "a tank grew sleeves");
 
-    const [left, right] = sleeved.slice(1).map((s: GarmentShell) =>
-      s.vertices.reduce((sum, v) => sum + v.x, 0) / s.vertices.length,
-    );
+    const [left, right] = sleeved
+      .filter((s: GarmentShell) => s.part === "sleeve")
+      .map((s: GarmentShell) => s.vertices.reduce((sum, v) => sum + v.x, 0) / s.vertices.length);
     assert.ok(left * right < 0, "both sleeves are on the same side");
     assert.ok(Math.abs(Math.abs(left) - Math.abs(right)) < 0.01, "sleeves are asymmetric");
   });
@@ -569,5 +570,102 @@ describe("a whole outfit layers correctly", () => {
       widthAtChest("o-wool-coat") > widthAtChest("o-sweater"),
       "the coat is narrower at the chest than the jumper under it",
     );
+  });
+});
+
+/*
+ * Sleeves.
+ *
+ * A jumper added without a sleeve-length measurement was drawn as a gilet:
+ * the renderer only looked at what the user had typed, so "not recorded" and
+ * "sleeveless" came out the same. The catalogue already knew — eighteen types
+ * carry a sleeve-length rule off arm length — it was simply never asked.
+ */
+describe("sleeves are drawn without being measured", () => {
+  const mesh = buildBody(FULL);
+  const ARM = 62;
+
+  const bare = (subcategory: string, category: Garment["category"]): Garment => ({
+    id: `s-${subcategory}`,
+    name: subcategory,
+    category,
+    subcategory,
+    colors: [{ hex: "#222222", share: 1 }],
+    pattern: "solid",
+    patternScale: "medium",
+    fabric: { cotton: 1 },
+    formality: 3,
+    fitIntent: "regular",
+    measurements: {},
+    seasons: ["autumn"],
+    careState: "clean",
+    imageIds: [],
+    wearCount: 0,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  });
+
+  const sleevesOf = (g: Garment) =>
+    buildGarments(mesh.frame, [g]).shells.filter((s) => s.part === "sleeve");
+
+  const sleeveCount = (g: Garment) => sleevesOf(g).length;
+
+  /** How far below the shoulder seam the cuff reaches. */
+  const sleeveDrop = (g: Garment) => {
+    const sleeves = sleevesOf(g);
+    if (!sleeves.length) return 0;
+    const lowest = Math.min(...sleeves.flatMap((s) => s.vertices.map((v) => v.y)));
+    return mesh.frame.shoulderY - lowest;
+  };
+
+  test("an unmeasured jumper has two sleeves, not none", () => {
+    assert.equal(sleeveCount(bare("sweater", "top")), 2);
+  });
+
+  test("every long-sleeved type gets sleeves with nothing typed in", () => {
+    const longSleeved = SUBCATEGORY_LIST.filter((d) => d.lengths.sleeveLength);
+    assert.ok(longSleeved.length >= 15, "the catalogue lost its sleeve rules");
+    for (const def of longSleeved) {
+      assert.equal(sleeveCount(bare(def.key, def.category)), 2, `${def.key} came out sleeveless`);
+    }
+  });
+
+  test("a long sleeve reaches the wrist", () => {
+    const drop = sleeveDrop(bare("sweater", "top"));
+    assert.ok(Math.abs(drop - ARM) < 4, `long sleeve stopped ${drop.toFixed(0)}cm down a ${ARM}cm arm`);
+  });
+
+  test("a t-shirt gets short sleeves, not long ones and not none", () => {
+    assert.equal(sleeveCount(bare("t-shirt", "top")), 2);
+    const drop = sleeveDrop(bare("t-shirt", "top"));
+    assert.ok(drop > 8 && drop < ARM * 0.5, `t-shirt sleeve dropped ${drop.toFixed(0)}cm`);
+  });
+
+  test("genuinely sleeveless types stay sleeveless", () => {
+    for (const key of ["tank", "vest"]) {
+      const def = SUBCATEGORY_LIST.find((d) => d.key === key)!;
+      assert.equal(sleeveCount(bare(key, def.category)), 0, `${key} grew sleeves`);
+    }
+  });
+
+  test("a recorded sleeve length still wins over the type's assumption", () => {
+    const cropped = { ...bare("sweater", "top"), measurements: { sleeveLength: 30 } };
+    const drop = sleeveDrop(cropped);
+    assert.ok(Math.abs(drop - 30) < 3, `a 30cm sleeve was drawn ${drop.toFixed(0)}cm long`);
+  });
+
+  test("every subcategory resolves to a sleeve length that is a real number", () => {
+    for (const def of SUBCATEGORY_LIST) {
+      const n = assumedSleeveLength(def, ARM);
+      assert.ok(Number.isFinite(n) && n >= 0, `${def.key} assumed ${n}`);
+      assert.ok(n <= ARM + 4, `${def.key} assumed a ${n}cm sleeve on a ${ARM}cm arm`);
+    }
+  });
+
+  test("a sleeve never reaches past the hand", () => {
+    for (const def of SUBCATEGORY_LIST) {
+      const drop = sleeveDrop(bare(def.key, def.category));
+      assert.ok(drop <= ARM + 2, `${def.key} sleeve runs ${drop.toFixed(0)}cm down a ${ARM}cm arm`);
+    }
   });
 });

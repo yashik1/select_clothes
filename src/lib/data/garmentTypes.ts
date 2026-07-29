@@ -51,6 +51,9 @@ export type HemPosition =
   | "ankle"
   | "floor";
 
+/** How far down the arm this type normally reaches. */
+export type SleeveKind = "none" | "short" | "elbow" | "long";
+
 export interface SubcategoryDef {
   key: string;
   label: string;
@@ -74,6 +77,13 @@ export interface SubcategoryDef {
    */
   canonicalStretch?: number;
   tuckable?: boolean;
+  /**
+   * Only needed where a `lengths.sleeveLength` rule can't say it: a rule
+   * implies long sleeves, but its absence is ambiguous between short-sleeved
+   * and sleeveless, and a tank top with sleeves is a worse drawing than a
+   * t-shirt without them.
+   */
+  sleeve?: SleeveKind;
   hem?: HemPosition;
   /** Marks the waist visually (belt loops, defined seam, wrap). */
   definesWaist?: boolean;
@@ -112,6 +122,7 @@ const list: SubcategoryDef[] = [
     formality: 1,
     volume: 2,
     ease: TOP_EASE_KNIT,
+    sleeve: "short",
     lengths: {
       bodyLength: { from: "torsoLength", offset: 24, tol: 5, longAdvice: "Hem sits low — front-tuck it to bring your waist back." },
     },
@@ -143,6 +154,7 @@ const list: SubcategoryDef[] = [
     formality: 2,
     volume: 2,
     ease: TOP_EASE_KNIT,
+    sleeve: "short",
     lengths: { bodyLength: { from: "torsoLength", offset: 23, tol: 5 } },
     tuckable: true,
     hem: "hip",
@@ -205,6 +217,7 @@ const list: SubcategoryDef[] = [
     formality: 3,
     volume: 2,
     ease: TOP_EASE_WOVEN,
+    sleeve: "long",
     lengths: { bodyLength: { from: "torsoLength", offset: 26, tol: 6 } },
     tuckable: true,
     hem: "hip",
@@ -219,6 +232,7 @@ const list: SubcategoryDef[] = [
     formality: 1,
     volume: 1,
     ease: TOP_EASE_KNIT,
+    sleeve: "none",
     lengths: {},
     tuckable: true,
     hem: "hip",
@@ -468,6 +482,7 @@ const list: SubcategoryDef[] = [
       waistFlat: { tooTight: 1, snug: 4, idealHi: 12, relaxed: 22, oversized: 36 },
       hipFlat: { tooTight: 2, snug: 5, idealHi: 15, relaxed: 26, oversized: 40 },
     },
+    sleeve: "short",
     lengths: {},
     hem: "knee",
     definesWaist: true,
@@ -486,6 +501,7 @@ const list: SubcategoryDef[] = [
       waistFlat: { tooTight: 0, snug: 2, idealHi: 8, relaxed: 15, oversized: 25 },
       hipFlat: { tooTight: 1, snug: 3, idealHi: 10, relaxed: 18, oversized: 30 },
     },
+    sleeve: "none",
     lengths: {},
     hem: "knee",
     definesWaist: true,
@@ -503,6 +519,7 @@ const list: SubcategoryDef[] = [
       chestFlat: { tooTight: 3, snug: 6, idealHi: 15, relaxed: 24, oversized: 36 },
       waistFlat: { tooTight: 1, snug: 4, idealHi: 14, relaxed: 26, oversized: 40 },
     },
+    sleeve: "none",
     lengths: {},
     hem: "floor",
     definesWaist: true,
@@ -521,6 +538,7 @@ const list: SubcategoryDef[] = [
       waistFlat: { tooTight: 1, snug: 4, idealHi: 13, relaxed: 24, oversized: 38 },
       hipFlat: { tooTight: 3, snug: 6, idealHi: 16, relaxed: 26, oversized: 40 },
     },
+    sleeve: "short",
     lengths: { inseam: { from: "inseam", offset: 0, tol: 3 } },
     hem: "ankle",
     definesWaist: true,
@@ -674,6 +692,7 @@ const list: SubcategoryDef[] = [
     formality: 2,
     volume: 3,
     ease: { chestFlat: { tooTight: 6, snug: 10, idealHi: 22, relaxed: 34, oversized: 48 } },
+    sleeve: "none",
     lengths: {},
     hem: "hip",
   },
@@ -731,6 +750,41 @@ export function subcategoryDef(subcategory: string, category: GarmentCategory): 
 
 export function subcategoriesFor(category: GarmentCategory): SubcategoryDef[] {
   return list.filter((s) => s.category === category);
+}
+
+/**
+ * How far down the arm this type reaches when the garment itself hasn't been
+ * measured. A `lengths.sleeveLength` rule is only ever written for a type that
+ * goes to the wrist, so its presence answers the question; its absence doesn't,
+ * which is why the ambiguous types declare `sleeve` outright.
+ */
+export function sleeveKind(def: SubcategoryDef): SleeveKind {
+  if (def.sleeve) return def.sleeve;
+  if (def.lengths.sleeveLength) return "long";
+  return "none";
+}
+
+/** Fractions of arm length, shoulder seam to cuff. */
+const SLEEVE_FRACTION: Record<SleeveKind, number> = {
+  none: 0,
+  short: 0.3,
+  elbow: 0.52,
+  long: 1,
+};
+
+/**
+ * The sleeve length to draw when the garment has none recorded: the type's own
+ * rule against this body's arm, rather than nothing at all. Returns 0 for a
+ * genuinely sleeveless type.
+ */
+export function assumedSleeveLength(def: SubcategoryDef, armLength: number): number {
+  const kind = sleeveKind(def);
+  if (kind === "none") return 0;
+  const rule = def.lengths.sleeveLength;
+  if (kind === "long" && rule?.from === "armLength") {
+    return Math.max(0, armLength + rule.offset);
+  }
+  return armLength * SLEEVE_FRACTION[kind];
 }
 
 /* --------------------------------------------- garment measurement meta -- */
