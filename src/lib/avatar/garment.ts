@@ -41,13 +41,21 @@ const SEGMENTS = 28;
  */
 const MIN_STANDOFF = 0.9;
 
+/**
+ * Draw order, outward from the body.
+ *
+ * Trousers sit under tops, not beside them: sharing a rank with `mid` left a
+ * sweater and a waistband at the same depth, and the painter's algorithm split
+ * the difference — a band of denim across the front of the jumper. Shoes go
+ * under everything because a trouser hem breaks over the shoe, not behind it.
+ */
 const LAYER_ORDER: Record<string, number> = {
-  base: 0,
-  mid: 1,
-  legs: 1,
-  outer: 2,
   feet: 0,
-  accent: 3,
+  legs: 1,
+  base: 2,
+  mid: 3,
+  outer: 4,
+  accent: 5,
 };
 
 /* ---------------------------------------------------------- interpolation -- */

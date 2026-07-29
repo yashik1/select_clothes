@@ -59,8 +59,10 @@ garment's, the room between them, and a verdict per landmark. A live fit preview
 runs *as you type* while adding an item, and **On you** hangs the piece on the
 same figure the You page builds — see below.
 
-**Studio** — build a combination and watch six dimensions score it in real time,
-with the specific tweak that would fix each problem.
+**Studio** — build a combination, see it on your own figure, and watch six
+dimensions score it in real time, with the specific tweak that would fix each
+problem. Layers stack the way they would on you: trousers under tops, tops under
+outerwear, hems breaking over shoes.
 
 **Gaps** — the counterfactual: which single item you don't own would unlock the
 most wearable outfits. Built by adding a hypothetical garment sized to your
@@ -184,14 +186,25 @@ adopts them. Register first, with the address you want to keep.
 | `DATABASE_SSL` | `disable`, `require`, or `verify`. Inferred from the host if unset — see below. |
 | `DATABASE_POOL_MAX` | Connections per instance. Default 10. |
 | `FITCHECK_SIGNUP` | `open` (default) or `closed`. The first account is always allowed. |
-| `FITCHECK_TRYON_PROVIDER` | `none` (default), `fal`, `fashn`, or `custom`. |
-| `FAL_KEY` | For `fal` — runs FASHN v1.6, ~$0.075 per garment layer. |
-| `FASHN_API_KEY` | For `fashn`. |
+| `FITCHECK_TRYON_PROVIDER` | `fal`, `fashn`, `custom`, or `none`. Usually unnecessary — see below. |
+| `FAL_KEY` | Runs FASHN v1.6 through fal.ai, ~$0.075 per garment layer. Setting it switches photo rendering on. |
+| `FASHN_API_KEY` | Same, against FASHN directly. |
 | `FITCHECK_TRYON_URL` / `FITCHECK_TRYON_KEY` | For `custom` — any endpoint taking `{ personImage, garmentImage, category }` and returning `{ image }`. |
 
-With no provider set, the Studio shows a flat-lay composite. For the question
-*"does this combination work?"* that's most of the value at none of the cost —
-the score to the side is what answers whether it fits.
+**Setting a key is enough.** The provider is inferred from whichever credential
+is present, because needing a second variable to act on the first means pasting
+your `FAL_KEY` and getting nothing — with the app still quietly serving the
+fallback. `FITCHECK_TRYON_PROVIDER` overrides the inference when you want a
+specific one, including `none` to switch rendering off with a key still in the
+environment.
+
+Photo rendering also needs a full-length photo of you on the You page and a
+photo on each garment; the Studio says which of those is missing rather than
+making you find out by pressing the button.
+
+None of that is required to see an outfit on yourself. The figure is built from
+your measurements and needs no key, no photos and no network call — the score
+beside it is what answers whether it fits.
 
 Weather uses [Open-Meteo](https://open-meteo.com/), which needs no key. If it's
 unreachable the weather dimension drops to zero confidence rather than inventing
@@ -279,14 +292,14 @@ src/lib/
   tryon.ts                 pluggable render providers
 src/app/                   Next.js App Router pages and API routes
 src/components/            UI, including client-side colour extraction
-tests/                     146 tests over the engines, auth and geometry
+tests/                     163 tests over the engines, auth and geometry
 ```
 
 ## Development
 
 ```bash
 npm run dev        # dev server
-npm test           # 146 tests
+npm test           # 163 tests
 npm run typecheck  # tsc --noEmit
 npm run build      # production build
 npm run seed       # reset to the demo wardrobe (--force if not empty)

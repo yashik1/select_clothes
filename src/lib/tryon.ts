@@ -41,16 +41,56 @@ export interface ProviderStatus {
   configured: boolean;
   /** Why it isn't usable, when it isn't. */
   hint?: string;
+  /** How the provider was chosen, so the UI can explain a surprise. */
+  source: "explicit" | "inferred" | "default";
+}
+
+const PROVIDER_IDS: ProviderId[] = ["none", "fal", "fashn", "custom"];
+
+/**
+ * Which provider a key implies.
+ *
+ * Setting `FAL_KEY` is an unambiguous statement of intent, and requiring a
+ * second variable to act on it means the obvious thing — paste the key, expect
+ * renders — silently does nothing at all. Explicit configuration still wins,
+ * including an explicit `none`, so this can only ever turn on a provider whose
+ * credentials someone deliberately supplied.
+ */
+function inferProvider(): ProviderId {
+  if (process.env.FAL_KEY) return "fal";
+  if (process.env.FASHN_API_KEY) return "fashn";
+  if (process.env.FITCHECK_TRYON_URL) return "custom";
+  return "none";
 }
 
 export function providerStatus(): ProviderStatus {
-  const id = (process.env.FITCHECK_TRYON_PROVIDER as ProviderId | undefined) ?? "none";
+  const raw = process.env.FITCHECK_TRYON_PROVIDER?.trim();
+  const explicit = raw ? (raw as ProviderId) : undefined;
+
+  if (explicit && !PROVIDER_IDS.includes(explicit)) {
+    return {
+      id: "none",
+      label: "Flat-lay preview (no external service)",
+      configured: true,
+      source: "explicit",
+      hint: `FITCHECK_TRYON_PROVIDER is set to "${raw}", which isn't a provider. Use fal, fashn, custom, or none.`,
+    };
+  }
+
+  const id = explicit ?? inferProvider();
+  const source: ProviderStatus["source"] = explicit
+    ? "explicit"
+    : id === "none"
+      ? "default"
+      : "inferred";
+
   switch (id) {
     case "fal":
       return {
         id,
         label: "fal.ai (FASHN v1.6)",
         configured: Boolean(process.env.FAL_KEY),
+        source,
         hint: process.env.FAL_KEY ? undefined : "Set FAL_KEY in your environment.",
       };
     case "fashn":
@@ -58,6 +98,7 @@ export function providerStatus(): ProviderStatus {
         id,
         label: "FASHN API",
         configured: Boolean(process.env.FASHN_API_KEY),
+        source,
         hint: process.env.FASHN_API_KEY ? undefined : "Set FASHN_API_KEY in your environment.",
       };
     case "custom":
@@ -65,6 +106,7 @@ export function providerStatus(): ProviderStatus {
         id,
         label: "Custom endpoint",
         configured: Boolean(process.env.FITCHECK_TRYON_URL),
+        source,
         hint: process.env.FITCHECK_TRYON_URL
           ? undefined
           : "Set FITCHECK_TRYON_URL to a POST endpoint taking { personImage, garmentImage }.",
@@ -74,7 +116,11 @@ export function providerStatus(): ProviderStatus {
         id: "none",
         label: "Flat-lay preview (no external service)",
         configured: true,
-        hint: "Set FITCHECK_TRYON_PROVIDER to fal, fashn or custom to render on your own photo.",
+        source,
+        hint:
+          source === "explicit"
+            ? "Photo rendering is switched off — FITCHECK_TRYON_PROVIDER is set to none."
+            : "Add FAL_KEY (or FASHN_API_KEY) to render on your own photo. The figure below needs no key at all.",
       };
   }
 }

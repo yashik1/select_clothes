@@ -2,8 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import type { Garment, GarmentCategory, OccasionKey } from "@/lib/types";
+import type { BodyMeasurements, Garment, GarmentCategory, OccasionKey, Unit } from "@/lib/types";
 import type { ScoreResult } from "@/lib/engine";
+import type { ProviderStatus } from "@/lib/tryon";
+import { BodyAvatar } from "./BodyAvatar";
 import { OCCASIONS, OCCASION_KEYS } from "@/lib/engine/formality";
 import { categoryLabel } from "@/lib/engine/insights";
 import {
@@ -29,7 +31,17 @@ interface ScoreResponse {
   weather: { tempC: number; label?: string } | null;
 }
 
-export function Studio({ wardrobe }: { wardrobe: Garment[] }) {
+export function Studio({
+  wardrobe,
+  measurements,
+  unit,
+  provider,
+}: {
+  wardrobe: Garment[];
+  measurements: BodyMeasurements;
+  unit: Unit;
+  provider: ProviderStatus;
+}) {
   const router = useRouter();
   const search = useSearchParams();
 
@@ -265,22 +277,40 @@ export function Studio({ wardrobe }: { wardrobe: Garment[] }) {
                 Nothing selected. Pick a top and a bottom to get started.
               </p>
             ) : (
-              <div className="mt-4 flex flex-wrap gap-3">
-                {chosen.map((g) => (
-                  <div key={g.id} className="w-24">
-                    <div className="aspect-[3/4] overflow-hidden rounded-lg border border-[var(--color-line)]">
-                      <GarmentThumb garment={g} />
+              <>
+                {/*
+                  The figure first, because it is the one preview that always
+                  works: built from measurements already on file, needing no
+                  photo of you, no photo of the clothes, no API key and no
+                  network call. Every gap you can see between cloth and skin is
+                  the ease the score to the right is made of.
+                */}
+                <div className="mt-4">
+                  <BodyAvatar
+                    measurements={measurements}
+                    unit={unit}
+                    garments={chosen}
+                    height={430}
+                  />
+                </div>
+
+                <div className="mt-4 flex flex-wrap gap-3">
+                  {chosen.map((g) => (
+                    <div key={g.id} className="w-24">
+                      <div className="aspect-[3/4] overflow-hidden rounded-lg border border-[var(--color-line)]">
+                        <GarmentThumb garment={g} />
+                      </div>
+                      <p className="mt-1 truncate text-[11px]">{g.name}</p>
+                      <button
+                        onClick={() => toggle(g.id)}
+                        className="text-[10px] text-[var(--color-faint)] hover:text-[var(--color-bad)]"
+                      >
+                        remove
+                      </button>
                     </div>
-                    <p className="mt-1 truncate text-[11px]">{g.name}</p>
-                    <button
-                      onClick={() => toggle(g.id)}
-                      className="text-[10px] text-[var(--color-faint)] hover:text-[var(--color-bad)]"
-                    >
-                      remove
-                    </button>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              </>
             )}
 
             {tryOn.image && (
@@ -293,11 +323,29 @@ export function Studio({ wardrobe }: { wardrobe: Garment[] }) {
             )}
             {tryOn.error && (
               <p className="mt-3 rounded-lg border border-[var(--color-line-soft)] bg-[var(--color-raised)] p-3 text-xs text-[var(--color-muted)]">
-                {tryOn.error} The flat-lay above is doing the same job for the
-                &ldquo;does this combination work&rdquo; question — the score to the right is what
-                actually answers whether it fits.
+                {tryOn.error} The figure above is drawn from your measurements and needs none of
+                that — and the score to the right is what actually answers whether it fits.
               </p>
             )}
+
+            {/*
+              Stated up front rather than discovered by pressing the button and
+              reading the failure. "I pasted the key and nothing happened" is
+              the whole reason this line exists.
+            */}
+            <p className="mt-3 text-[11px] leading-relaxed text-[var(--color-faint)]">
+              Photo render: {provider.label}
+              {provider.configured && provider.id !== "none" ? (
+                <>
+                  {" "}
+                  — ready
+                  {provider.source === "inferred" && " (picked up from the API key you set)"}. Each
+                  layer costs about $0.075 and needs a full-length photo of you on the You page.
+                </>
+              ) : (
+                <> — {provider.hint}</>
+              )}
+            </p>
           </Card>
         </div>
 

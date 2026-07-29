@@ -489,3 +489,85 @@ describe("the shoulder joins up", () => {
     }
   });
 });
+
+/*
+ * Layering, which only shows up once more than one thing is on the figure —
+ * the studio's case rather than the wardrobe item's.
+ */
+describe("a whole outfit layers correctly", () => {
+  const mesh = buildBody(FULL);
+
+  const piece = (
+    subcategory: string,
+    category: Garment["category"],
+    measurements: GarmentMeasurements = {},
+  ): Garment => ({
+    id: `o-${subcategory}`,
+    name: subcategory,
+    category,
+    subcategory,
+    colors: [{ hex: "#404040", share: 1 }],
+    pattern: "solid",
+    patternScale: "medium",
+    fabric: { cotton: 1 },
+    formality: 3,
+    fitIntent: "regular",
+    measurements,
+    seasons: ["autumn"],
+    careState: "clean",
+    imageIds: [],
+    wearCount: 0,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  });
+
+  const outfit = [
+    piece("minimal-sneakers", "shoes"),
+    piece("jeans", "bottom", { waistFlat: 42, inseam: 79 }),
+    piece("t-shirt", "top", { chestFlat: 52 }),
+    piece("sweater", "top", { chestFlat: 56, sleeveLength: 62 }),
+    piece("wool-coat", "outerwear", { chestFlat: 62, sleeveLength: 64 }),
+  ];
+
+  test("nothing is skipped and every piece is drawn", () => {
+    const { shells, skipped } = buildGarments(mesh.frame, outfit);
+    assert.deepEqual(skipped, []);
+    const drawn = new Set(shells.map((s) => s.garmentId));
+    assert.equal(drawn.size, outfit.length, "a garment vanished from the outfit");
+  });
+
+  test("trousers sit under tops, and shoes under everything", () => {
+    const { shells } = buildGarments(mesh.frame, outfit);
+    const layerOf = (id: string) => shells.find((s) => s.garmentId === id)!.layer;
+
+    // A waistband sharing a rank with a jumper let the painter's algorithm
+    // paint a band of denim across the front of it.
+    assert.ok(layerOf("o-jeans") < layerOf("o-t-shirt"), "jeans are not under the tee");
+    assert.ok(layerOf("o-t-shirt") < layerOf("o-sweater"), "the tee is not under the jumper");
+    assert.ok(layerOf("o-sweater") < layerOf("o-wool-coat"), "the jumper is not under the coat");
+    assert.ok(
+      layerOf("o-minimal-sneakers") < layerOf("o-jeans"),
+      "the trouser hem does not break over the shoe",
+    );
+  });
+
+  test("shells come back in draw order", () => {
+    const { shells } = buildGarments(mesh.frame, outfit);
+    const layers = shells.map((s) => s.layer);
+    assert.deepEqual(layers, [...layers].sort((a, b) => a - b));
+  });
+
+  test("an outer layer really is drawn outside the one beneath it", () => {
+    // Not just sorted — actually further from the body, or the sort is a lie.
+    const { shells } = buildGarments(mesh.frame, outfit);
+    const widthAtChest = (id: string) => {
+      const shell = shells.find((s) => s.garmentId === id)!;
+      const near = shell.vertices.filter((v) => Math.abs(v.y - mesh.frame.landmark.chest) < 3);
+      return Math.max(...near.map((v) => Math.abs(v.x)));
+    };
+    assert.ok(
+      widthAtChest("o-wool-coat") > widthAtChest("o-sweater"),
+      "the coat is narrower at the chest than the jumper under it",
+    );
+  });
+});
