@@ -5,6 +5,14 @@ import { MEASUREMENT_GROUPS } from "@/lib/data/measurementFields";
 import { deriveSeason, paletteSwatches, SEASON_NAMES } from "@/lib/color/palette";
 import { deriveBodyShape, SHAPE_LABEL, SHAPE_STRATEGY } from "@/lib/engine/bodyShape";
 import { fromDisplay, toDisplay, unitLabel } from "@/lib/units";
+import {
+  fromFeetInches,
+  measurementProblems,
+  problemFor,
+  toFeetInches,
+  weightFromDisplay,
+  weightToDisplay,
+} from "@/lib/measurements";
 import type {
   BodyMeasurements,
   BodyShape,
@@ -68,13 +76,37 @@ export function ProfileForm({ initial }: { initial: Profile }) {
     [measurements, shapeOverride],
   );
 
+  /*
+   * Checked as you type rather than on save, because a wrong measurement is
+   * only obvious next to the figure it produces — and by the time you have
+   * pressed save you have stopped looking at the field that caused it.
+   */
+  const problems = useMemo(() => measurementProblems(measurements, unit), [measurements, unit]);
+
   const setMeasurement = (key: keyof BodyMeasurements, raw: string) => {
     setMeasurements((prev) => {
       const next = { ...prev };
       if (raw.trim() === "") delete next[key];
       else {
-        const v = fromDisplay(raw, unit);
+        // Weight is a mass, not a length; it does not convert by 2.54.
+        const v = key === "weight" ? weightFromDisplay(raw, unit) : fromDisplay(raw, unit);
         if (v !== undefined) next[key] = v;
+      }
+      return next;
+    });
+    setSaved(false);
+  };
+
+  const setHeightParts = (ft: string, inches: string) => {
+    setMeasurements((prev) => {
+      const next = { ...prev };
+      if (ft.trim() === "" && inches.trim() === "") delete next.height;
+      else {
+        const v = fromFeetInches(
+          ft.trim() === "" ? "" : parseFloat(ft),
+          inches.trim() === "" ? "" : parseFloat(inches),
+        );
+        if (v !== undefined) next.height = v;
       }
       return next;
     });
@@ -94,6 +126,16 @@ export function ProfileForm({ initial }: { initial: Profile }) {
   }
 
   async function save() {
+    // Saving an impossible body is worse than not saving: every score the app
+    // produces afterwards is computed against it, confidently and wrongly.
+    if (problems.length) {
+      setError(
+        problems.length === 1
+          ? "One measurement can't be right — see the field marked in red."
+          : `${problems.length} measurements can't be right — see the fields marked in red.`,
+      );
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -140,8 +182,8 @@ export function ProfileForm({ initial }: { initial: Profile }) {
         </div>
         <div className="flex items-center gap-3">
           {saved && <span className="text-xs text-[var(--color-good)]">Saved</span>}
-          {error && <span className="text-xs text-[var(--color-bad)]">{error}</span>}
-          <Button onClick={save} disabled={saving}>
+          {error && <span className="max-w-sm text-xs text-[var(--color-bad)]">{error}</span>}
+          <Button onClick={save} disabled={saving || problems.length > 0}>
             {saving ? "Saving…" : "Save profile"}
           </Button>
         </div>
@@ -229,28 +271,84 @@ export function ProfileForm({ initial }: { initial: Profile }) {
               <p className="display text-xl">{group.title}</p>
               <p className="mt-0.5 mb-4 text-sm text-[var(--color-muted)]">{group.blurb}</p>
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {group.fields.map((f) => (
-                  <div key={f.key}>
-                    <FieldLabel>
-                      {f.label}
-                      {f.core && <span className="ml-1 text-[var(--color-accent)]">*</span>}
-                    </FieldLabel>
-                    <div className="relative">
-                      <input
-                        type="number"
-                        step="0.1"
-                        inputMode="decimal"
-                        className="tabular pr-10"
-                        value={toDisplay(measurements[f.key], unit)}
-                        onChange={(e) => setMeasurement(f.key, e.target.value)}
-                      />
-                      <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-[var(--color-faint)]">
-                        {f.key === "weight" ? (unit === "in" ? "lb" : "kg") : unitLabel(unit)}
-                      </span>
+                {group.fields.map((f) => {
+                  const problem = problemFor(problems, f.key);
+                  const ring = problem
+                    ? "border-[var(--color-bad)] focus:border-[var(--color-bad)]"
+                    : "";
+                  // Nobody describes their height as sixty-four inches, and a
+                  // box that asks for one invites "5.4" — which is how a
+                  // stature of 13cm gets into the database.
+                  const asFeet = f.key === "height" && unit === "in";
+                  const { ft, inches } = asFeet
+                    ? toFeetInches(measurements.height)
+                    : { ft: "" as number | "", inches: "" as number | "" };
+
+                  return (
+                    <div key={f.key}>
+                      <FieldLabel htmlFor={asFeet ? `m-${f.key}-ft` : `m-${f.key}`}>
+                        {f.label}
+                        {f.core && <span className="ml-1 text-[var(--color-accent)]">*</span>}
+                      </FieldLabel>
+
+                      {asFeet ? (
+                        <div className="flex gap-2">
+                          {([
+                            ["ft", ft, (v: string) => setHeightParts(v, String(inches))],
+                            ["in", inches, (v: string) => setHeightParts(String(ft), v)],
+                          ] as const).map(([suffix, value, onChange]) => (
+                            <div key={suffix} className="relative flex-1">
+                              <input
+                                type="number"
+                                id={`m-${f.key}-${suffix}`}
+                                step={suffix === "ft" ? "1" : "0.5"}
+                                inputMode="decimal"
+                                aria-label={suffix === "ft" ? "Height, feet" : "Height, inches"}
+                                aria-invalid={problem ? true : undefined}
+                                className={`tabular pr-8 ${ring}`}
+                                value={value}
+                                onChange={(e) => onChange(e.target.value)}
+                              />
+                              <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-[var(--color-faint)]">
+                                {suffix}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="relative">
+                          <input
+                            type="number"
+                            id={`m-${f.key}`}
+                            step="0.1"
+                            inputMode="decimal"
+                            aria-invalid={problem ? true : undefined}
+                            aria-describedby={`m-${f.key}-note`}
+                            className={`tabular pr-10 ${ring}`}
+                            value={
+                              f.key === "weight"
+                                ? weightToDisplay(measurements.weight, unit)
+                                : toDisplay(measurements[f.key], unit)
+                            }
+                            onChange={(e) => setMeasurement(f.key, e.target.value)}
+                          />
+                          <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-[var(--color-faint)]">
+                            {f.key === "weight" ? (unit === "in" ? "lb" : "kg") : unitLabel(unit)}
+                          </span>
+                        </div>
+                      )}
+
+                      <p
+                        id={`m-${f.key}-note`}
+                        className={`mt-1 text-xs leading-snug ${
+                          problem ? "text-[var(--color-bad)]" : "text-[var(--color-faint)]"
+                        }`}
+                      >
+                        {problem ?? f.how}
+                      </p>
                     </div>
-                    <p className="mt-1 text-xs leading-snug text-[var(--color-faint)]">{f.how}</p>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </Card>
           ))}
@@ -510,8 +608,20 @@ export function ProfileForm({ initial }: { initial: Profile }) {
   );
 }
 
-function FieldLabel({ children }: { children: React.ReactNode }) {
-  return <span className="mb-1 block text-xs font-medium text-[var(--color-muted)]">{children}</span>;
+/**
+ * A real `<label>` when it has something to point at. These were spans, which
+ * look identical and leave every field with no accessible name at all — a
+ * screen reader reads twenty-two anonymous number boxes.
+ */
+function FieldLabel({ children, htmlFor }: { children: React.ReactNode; htmlFor?: string }) {
+  const className = "mb-1 block text-xs font-medium text-[var(--color-muted)]";
+  return htmlFor ? (
+    <label htmlFor={htmlFor} className={className}>
+      {children}
+    </label>
+  ) : (
+    <span className={className}>{children}</span>
+  );
 }
 
 function Ratio({ label, value }: { label: string; value: number | null }) {

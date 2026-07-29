@@ -75,6 +75,18 @@ what the app has learned about how each brand sizes on you.
 your girths that you can turn through 360° and tilt to see from any side. Body
 shape and seasonal palette derive live as you type, both overridable.
 
+Measurements are bounded to what a body can actually be, and the profile won't
+save while one isn't. That sounds fussy until you see what a bad one does:
+every landmark position and every girth you *haven't* given is a fraction of
+your stature, so a height entered as "5.4" — meaning five foot four, into a
+field asking for inches — puts a 13cm stature under a real chest and the whole
+figure collapses around it, while the fit engine goes on scoring confidently
+against a body that cannot exist. Working in inches now gets separate feet and
+inches boxes, because nobody thinks of themselves as sixty-four inches tall.
+Bounds reject the impossible rather than the unusual: the smallest and largest
+adults pass, and a girth is only refused against a stature when it exceeds it
+by half again.
+
 ### Seeing the fit instead of reading it
 
 Open any garment and the same figure is wearing it. The shell is built from
@@ -258,6 +270,7 @@ src/lib/
   engine/packing.ts        set-cover packing optimiser
   engine/calibration.ts    per-brand fit learning
   engine/insights.ts       wardrobe analytics
+  measurements.ts          what a body can measure — bounds and unit handling
   avatar/body.ts           the figure: measurements lofted into a mesh
   avatar/garment.ts        clothes built from their own measurements, hung on it
   avatar/render.ts         software renderer — projection, shading, girth bands
@@ -266,14 +279,14 @@ src/lib/
   tryon.ts                 pluggable render providers
 src/app/                   Next.js App Router pages and API routes
 src/components/            UI, including client-side colour extraction
-tests/                     122 tests over the engines, auth and geometry
+tests/                     146 tests over the engines, auth and geometry
 ```
 
 ## Development
 
 ```bash
 npm run dev        # dev server
-npm test           # 122 tests
+npm test           # 146 tests
 npm run typecheck  # tsc --noEmit
 npm run build      # production build
 npm run seed       # reset to the demo wardrobe (--force if not empty)

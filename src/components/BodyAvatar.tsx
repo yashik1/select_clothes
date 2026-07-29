@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { buildBody } from "@/lib/avatar/body";
 import { buildGarments } from "@/lib/avatar/garment";
 import { renderBody, type Camera } from "@/lib/avatar/render";
+import { measurementProblems } from "@/lib/measurements";
 import { formatLength } from "@/lib/units";
 import type { BodyMeasurements, Garment, Unit } from "@/lib/types";
 
@@ -170,6 +171,15 @@ export function BodyAvatar({
 
   const missing = mesh.estimated.length;
 
+  /*
+   * A figure drawn from an impossible profile still draws — it just isn't of
+   * anybody. Saying so here matters more than on the form, because this is
+   * where the mistake becomes visible: the reason to look at the picture at
+   * all is that a wrong number is obvious as a shape long before it is
+   * obvious as a digit.
+   */
+  const impossible = useMemo(() => measurementProblems(measurements, unit), [measurements, unit]);
+
   return (
     <div className="rounded-3xl border border-[var(--color-line)] bg-[var(--color-surface)] p-4">
       <canvas
@@ -246,6 +256,13 @@ export function BodyAvatar({
           </button>
         </div>
       </div>
+
+      {impossible.length > 0 && (
+        <p className="mt-2.5 rounded-xl border border-[var(--color-bad)] bg-[var(--color-paper)] px-3 py-2 text-xs leading-relaxed text-[var(--color-bad)]">
+          This isn&apos;t a shape a body comes in, so the figure and every score
+          built on it are wrong. {impossible[0].message}
+        </p>
+      )}
 
       <p className="mt-2.5 text-xs leading-relaxed text-[var(--color-faint)]">
         {dressable ? (

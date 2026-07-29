@@ -298,7 +298,20 @@ export function buildBody(m: BodyMeasurements, opts: BodyOptions = {}): BodyMesh
 
   const neckAxesTop = ellipseAxes(neck, ASPECT.neck);
   const chestAxes = ellipseAxes(chest, ASPECT.chest);
-  const shoulderHalf = (shoulderWidth / 2) * SHOULDER_TORSO_SHARE;
+
+  /*
+   * Shoulders narrower than the chest is a real shape — a full bust on a
+   * narrow frame — so it is allowed, up to a point. Past that the torso stops
+   * reading as a body and starts reading as a cone: lofting a tiny shoulder
+   * ring onto a huge chest ring is what turned a profile whose height had been
+   * typed in feet into a flying saucer, and the numbers behind it were
+   * individually unremarkable. A floor here means no arithmetic on the input
+   * can produce that silhouette, whatever the validation upstream misses.
+   */
+  const shoulderHalf = Math.max(
+    (shoulderWidth / 2) * SHOULDER_TORSO_SHARE,
+    chestAxes.a * 0.72,
+  );
   /** How far the neck-to-shoulder slope has run by the trapezius. */
   const TRAPEZIUS_RUN = 0.44;
   const trapeziusHalf = neckAxesTop.a + (shoulderHalf - neckAxesTop.a) * TRAPEZIUS_RUN;

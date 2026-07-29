@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { BOUNDS, measurementProblems } from "./measurements";
+import type { BodyMeasurements } from "./types";
 
 const hex = z.string().regex(/^#[0-9a-fA-F]{6}$/, "Expected a #rrggbb colour");
 
@@ -6,16 +8,44 @@ const numberish = z.union([z.number(), z.null()]).optional();
 
 const CARE_STATES = ["clean", "laundry", "repair", "stored", "loaned"] as const;
 
+/**
+ * A body measurement, bounded. The client checks these too and says so far
+ * more helpfully, but the client is not the last word: a profile saved with a
+ * stature of 13cm silently poisons every score the app produces afterwards,
+ * because every unmeasured girth and every landmark height is a fraction of it.
+ */
+const measured = (key: keyof BodyMeasurements) =>
+  z
+    .union([z.number(), z.null()])
+    .optional()
+    .refine(
+      (v) => typeof v !== "number" || (v >= BOUNDS[key].min && v <= BOUNDS[key].max),
+      // Centimetres, and kilograms for weight — this is the storage boundary,
+      // so it has no idea what the user was shown.
+      `${key} must be between ${BOUNDS[key].min} and ${BOUNDS[key].max}`,
+    );
+
 export const measurementsSchema = z
   .object({
-    height: numberish, weight: numberish, neck: numberish, shoulderWidth: numberish,
-    chest: numberish, underbust: numberish, waistNatural: numberish, waistWorn: numberish,
-    highHip: numberish, hip: numberish, thigh: numberish, calf: numberish,
-    bicep: numberish, wrist: numberish, armLength: numberish, sleeveFromCenterBack: numberish,
-    torsoLength: numberish, backLength: numberish, inseam: numberish, outseam: numberish,
-    riseFront: numberish, footLength: numberish,
+    height: measured("height"), weight: measured("weight"), neck: measured("neck"),
+    shoulderWidth: measured("shoulderWidth"), chest: measured("chest"),
+    underbust: measured("underbust"), waistNatural: measured("waistNatural"),
+    waistWorn: measured("waistWorn"), highHip: measured("highHip"), hip: measured("hip"),
+    thigh: measured("thigh"), calf: measured("calf"), bicep: measured("bicep"),
+    wrist: measured("wrist"), armLength: measured("armLength"),
+    sleeveFromCenterBack: measured("sleeveFromCenterBack"),
+    torsoLength: measured("torsoLength"), backLength: measured("backLength"),
+    inseam: measured("inseam"), outseam: measured("outseam"),
+    riseFront: measured("riseFront"), footLength: measured("footLength"),
   })
-  .partial();
+  .partial()
+  // Fields that pass on their own can still be impossible together — a girth
+  // larger than a stature is the shape a height typed in feet takes.
+  .superRefine((m, ctx) => {
+    for (const problem of measurementProblems(m as BodyMeasurements, "cm")) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: [problem.key], message: problem.message });
+    }
+  });
 
 export const garmentMeasurementsSchema = z
   .object({
