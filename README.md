@@ -54,7 +54,8 @@ just a picture of an answer you already have.
 **Today** — ranked outfits from what's actually clean, scored for the occasion
 and today's forecast, each with the reason it's ranked where it is.
 
-**Wardrobe** — items with a per-garment fit report: your measurement, the
+**Wardrobe** — add an item by photographing it, shooting it with the camera, or
+pasting the shop's product link; then a per-garment fit report: your measurement, the
 garment's, the room between them, and a verdict per landmark. A live fit preview
 runs *as you type* while adding an item, and **On you** hangs the piece on the
 same figure the You page builds — see below.
@@ -114,6 +115,33 @@ than drawn badly on it.
 
 It is the same renderer as the You page, drawing into the same 2D canvas — no
 WebGL, no model, nothing fetched.
+
+---
+
+## Starting from a product link
+
+Paste the page you bought it from and the form fills itself in. It reads only
+what the shop publishes on purpose — the schema.org `Product` block it feeds to
+Google Shopping, its Open Graph tags, or, on Shopify, the JSON endpoint beside
+every product URL. Nothing parses page layout and nothing works around a bot
+check: a site that publishes no structured data comes back saying so.
+
+That gets you name, brand, price, photo, usually the fibre content, and a guess
+at what kind of garment it is, matched against this app's own catalogue.
+
+**It cannot get you the measurements, and that is the point.** Garment
+dimensions live in a size-chart modal, usually drawn by JavaScript, in a
+different shape on every site — they are essentially never in structured data.
+So an import leaves the fit engine exactly where a typed size label leaves it,
+at about 45% confidence. It therefore pre-fills the form rather than saving:
+the item stays visibly unfinished, and the panel beside it goes on asking for
+the two numbers that take the verdict past 90%.
+
+The server fetches the URL you give it, which is the request shape that gets an
+app owned — `169.254.169.254` is the cloud metadata service and hands out
+credentials. So the host is resolved before connecting and refused unless every
+address it answers with is public, re-checked at every redirect, with a size
+cap, a timeout and no crawling.
 
 ---
 
@@ -290,6 +318,8 @@ src/lib/
   engine/calibration.ts    per-brand fit learning
   engine/insights.ts       wardrobe analytics
   measurements.ts          what a body can measure — bounds and unit handling
+  import/product.ts        reading a garment off a shop's structured data
+  import/address.ts        which addresses the server may not connect to
   avatar/body.ts           the figure: measurements lofted into a mesh
   avatar/garment.ts        clothes built from their own measurements, hung on it
   avatar/render.ts         software renderer — projection, shading, girth bands
@@ -298,14 +328,14 @@ src/lib/
   tryon.ts                 pluggable render providers
 src/app/                   Next.js App Router pages and API routes
 src/components/            UI, including client-side colour extraction
-tests/                     171 tests over the engines, auth and geometry
+tests/                     202 tests over the engines, auth, geometry and import
 ```
 
 ## Development
 
 ```bash
 npm run dev        # dev server
-npm test           # 171 tests
+npm test           # 202 tests
 npm run typecheck  # tsc --noEmit
 npm run build      # production build
 npm run seed       # reset to the demo wardrobe (--force if not empty)

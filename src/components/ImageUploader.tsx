@@ -47,7 +47,7 @@ async function downscale(file: File): Promise<{ blob: Blob; canvas: HTMLCanvasEl
 
 /** Reads a stored image back, so colours can be pulled from what the server
  *  converted when the browser couldn't read the original. */
-function canvasFromUrl(url: string): Promise<HTMLCanvasElement> {
+export function canvasFromUrl(url: string): Promise<HTMLCanvasElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => resolve(fitToCanvas(img, img.naturalWidth, img.naturalHeight));

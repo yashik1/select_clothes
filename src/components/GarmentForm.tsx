@@ -25,7 +25,8 @@ import type {
   SizeSystem,
 } from "@/lib/types";
 import { Button, Card, Pill, SectionTitle, Swatch } from "./ui";
-import { ImageUploader } from "./ImageUploader";
+import { ImageUploader, canvasFromUrl, extractColors } from "./ImageUploader";
+import type { ImportedProduct } from "@/lib/import/product";
 
 const CATEGORIES: { key: GarmentCategory; label: string }[] = [
   { key: "top", label: "Top" },
@@ -94,6 +95,57 @@ export function GarmentForm({ profile, initial }: { profile: Profile; initial?: 
   const subcategories = useMemo(() => subcategoriesFor(g.category), [g.category]);
 
   const patch = (p: Partial<Garment>) => setG((prev) => ({ ...prev, ...p }));
+
+  /**
+   * Fills in what a product page could tell us, and nothing more.
+   *
+   * Only empty fields are written, so a link pasted after some typing can't
+   * overwrite what the user already knows. The colours come from the stored
+   * photo rather than the shop's colour word — "Navy" is not a value the
+   * colour engine can do anything with.
+   */
+  async function applyImport(result: ImportResult) {
+    const p = result.product;
+    setG((prev) => {
+      const next: Garment = { ...prev };
+      if (p.name && !prev.name.trim()) next.name = p.name;
+      if (p.brand && !prev.brand) next.brand = p.brand;
+      if (p.size && !prev.size) next.size = p.size;
+      if (p.retailer && !prev.retailer) next.retailer = p.retailer;
+      if (p.currency && !prev.currency) next.currency = p.currency;
+      if (typeof p.pricePaid === "number" && prev.pricePaid === undefined) next.pricePaid = p.pricePaid;
+      next.productUrl = p.productUrl;
+      if (p.category && p.subcategory) {
+        next.category = p.category;
+        next.subcategory = p.subcategory;
+      }
+      if (result.imageId && !prev.imageIds.includes(result.imageId)) {
+        next.imageIds = [...prev.imageIds, result.imageId];
+      }
+      return next;
+    });
+
+    if (p.fabric && Object.keys(p.fabric).length) {
+      setFabricRows(
+        Object.entries(p.fabric).map(([fiber, share]) => ({
+          fiber,
+          pct: Math.round(share * 100),
+        })),
+      );
+    }
+
+    // Same-origin now that it is stored, so the canvas isn't tainted and the
+    // colours can be read off it exactly as they are for an upload.
+    if (result.imageId) {
+      try {
+        const canvas = await canvasFromUrl(`/api/images/${result.imageId}`);
+        const colors = extractColors(canvas);
+        if (colors.length) patch({ colors });
+      } catch {
+        // The photo is stored either way; the colour picker is still there.
+      }
+    }
+  }
 
   /* Live fit preview — the same engine the server runs, executed as you type.
      Watching "too tight at the chest" appear the moment you enter a size is the
@@ -196,6 +248,8 @@ export function GarmentForm({ profile, initial }: { profile: Profile; initial?: 
           </Button>
         </div>
       </div>
+
+      {!initial && <ImportBar onImport={applyImport} />}
 
       <div className="grid gap-6 lg:grid-cols-[1fr_20rem]">
         <div className="space-y-6">
@@ -650,3 +704,94 @@ function Choice({
 }
 
 export { SectionTitle };
+
+interface ImportResult {
+  product: ImportedProduct;
+  imageId?: string;
+  stillNeeded: string[];
+}
+
+/**
+ * Pasting a link from the shop you bought it from.
+ *
+ * It fills the catalogue fields and stops there, and says so. Structured
+ * product data carries a name, a brand, a price and a photo; it does not carry
+ * how wide the chest is laid flat, which is the number the fit engine actually
+ * runs on. Hiding that would produce an item that looks finished and scores at
+ * the confidence of a guessed size, so the result names what is still missing
+ * rather than leaving it to be discovered on the verdict screen.
+ */
+function ImportBar({ onImport }: { onImport: (r: ImportResult) => void | Promise<void> }) {
+  const [url, setUrl] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<ImportResult | null>(null);
+
+  async function run() {
+    if (!url.trim() || busy) return;
+    setBusy(true);
+    setError(null);
+    setDone(null);
+    try {
+      const res = await fetch("/api/garments/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? `Import failed (${res.status})`);
+      setDone(json);
+      await onImport(json);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "That link couldn't be read.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Card className="p-5">
+      <p className="display text-xl">Start from a link</p>
+      <p className="mt-0.5 text-sm text-[var(--color-muted)]">
+        Paste the product page from the shop. It fills in the name, brand, price and photo — the
+        measurements it can&apos;t know are the ones worth adding yourself.
+      </p>
+
+      <div className="mt-3 flex flex-wrap gap-2">
+        <input
+          type="url"
+          inputMode="url"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              run();
+            }
+          }}
+          placeholder="https://…"
+          aria-label="Product page link"
+          className="min-w-0 flex-1"
+        />
+        <Button variant="ghost" onClick={run} disabled={busy || !url.trim()}>
+          {busy ? "Reading…" : "Fill it in"}
+        </Button>
+      </div>
+
+      {error && <p className="mt-2.5 text-xs text-[var(--color-bad)]">{error}</p>}
+
+      {done && (
+        <div className="mt-3 rounded-xl border border-[var(--color-line-soft)] bg-[var(--color-raised)] p-3 text-xs leading-relaxed">
+          <p className="text-[var(--color-text)]">
+            Filled in from {done.product.retailer ?? "the page"}
+            {done.product.found.length ? `: ${done.product.found.join(", ")}` : ""}.
+          </p>
+          <p className="mt-1 text-[var(--color-muted)]">
+            Still yours to add: {done.stillNeeded.join(", ")}. A size label alone gets the fit
+            verdict to about 45% confidence; the garment&apos;s own measurements take it past 90%.
+          </p>
+        </div>
+      )}
+    </Card>
+  );
+}

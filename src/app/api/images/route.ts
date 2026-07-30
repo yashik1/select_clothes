@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
-import sharp from "sharp";
-import { newId, nowIso, saveImage } from "@/lib/db";
 import { readFormBody } from "@/lib/http";
 import { requireApiUser } from "@/lib/server/session";
+import { REFUSED_MIME, describeImageError, normaliseImage } from "@/lib/server/storeImage";
+import { newId, nowIso, saveImage } from "@/lib/db";
 
 /**
  * Originals can be large — a phone HEIC or a 48MP JPEG runs to tens of
@@ -11,25 +11,8 @@ import { requireApiUser } from "@/lib/server/session";
  */
 const MAX_BYTES = 30 * 1024 * 1024;
 
-/** Long edge of the stored image. Enough for a full-bleed thumbnail and a
- *  try-on input, and nowhere near what a phone camera produces. */
-const MAX_EDGE = 1600;
 
-/**
- * Deliberately not SVG. sharp will rasterise one, but an SVG is a document
- * that can reference external resources, and nothing in a wardrobe is a
- * vector drawing — so the format is simply not accepted.
- */
-const REFUSED = new Set(["image/svg+xml", "image/svg"]);
 
-function describe(err: unknown): string {
-  const message = err instanceof Error ? err.message : String(err);
-  // libvips messages are accurate but not sentences.
-  if (/unsupported image format|bad extract area|not a known format/i.test(message)) {
-    return "That file isn't an image this server can read. JPEG, PNG, HEIC, WebP, AVIF, GIF, TIFF and BMP all work.";
-  }
-  return `Couldn't process that image (${message}).`;
-}
 
 /**
  * Normalises whatever arrives into one stored form.
@@ -54,7 +37,7 @@ export async function POST(req: Request) {
   if (!(file instanceof File)) {
     return NextResponse.json({ error: "No file supplied." }, { status: 400 });
   }
-  if (REFUSED.has(file.type)) {
+  if (REFUSED_MIME.has(file.type)) {
     return NextResponse.json(
       { error: "SVG files aren't accepted. Use a photo." },
       { status: 415 },
@@ -72,16 +55,10 @@ export async function POST(req: Request) {
 
   let bytes: Buffer;
   try {
-    bytes = await sharp(Buffer.from(await file.arrayBuffer()), { failOn: "none" })
-      // Phones record orientation in EXIF rather than rotating the pixels, so
-      // without this a photo taken sideways is stored sideways.
-      .rotate()
-      .resize({ width: MAX_EDGE, height: MAX_EDGE, fit: "inside", withoutEnlargement: true })
-      .jpeg({ quality: 82, progressive: true, mozjpeg: true })
-      .toBuffer();
+    bytes = await normaliseImage(Buffer.from(await file.arrayBuffer()));
   } catch (err) {
     console.error("[images] conversion failed:", err);
-    return NextResponse.json({ error: describe(err) }, { status: 415 });
+    return NextResponse.json({ error: describeImageError(err) }, { status: 415 });
   }
 
   try {
