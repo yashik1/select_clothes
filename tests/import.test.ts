@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   classify,
+  classifyBest,
   extractProduct,
   fromJsonLd,
   fromOpenGraph,
@@ -295,6 +296,74 @@ describe("working out what the garment is", () => {
 
   test("an unrecognisable name is left for the user rather than guessed", () => {
     assert.equal(classify("The Everyday Essential No. 4"), null);
+  });
+
+  /*
+   * A crew-neck t-shirt came back as a sweater, because "crew neck" was in the
+   * synonym table pointing at sweater and, being the longer phrase, outvoted
+   * "tee". Necklines, fabrics, washes and fits describe a garment; they never
+   * name one, and any of them left in that table can only ever beat the word
+   * that does.
+   */
+  test("a neckline never decides what the garment is", () => {
+    for (const name of [
+      "Crew-Neck T-Shirt",
+      "Soft Wash Crew-Neck Tee",
+      "Vintage Crewneck T-Shirt",
+      "Luxe-Touch Crew Neck Tee",
+      "Slub Cotton Crew-Neck Tee",
+      "V-Neck Tee",
+      "Scoop Neck Tee",
+    ]) {
+      assert.equal(classify(name)?.subcategory, "t-shirt", name);
+    }
+  });
+
+  test("a crew neck on something that really is a jumper still reads as one", () => {
+    assert.equal(classify("Merino Crew-Neck Jumper")?.subcategory, "sweater");
+    assert.equal(classify("Crew Neck Sweater")?.subcategory, "sweater");
+  });
+
+  test("a fabric never decides what the garment is", () => {
+    assert.equal(classify("Denim Shirt")?.category, "top");
+    assert.equal(classify("Knit Polo Shirt")?.subcategory, "polo");
+    assert.equal(classify("Corduroy Trousers")?.category, "bottom");
+    assert.equal(classify("Leather Jacket")?.subcategory, "leather-jacket");
+  });
+
+  test("the last garment word wins, because that is where English puts it", () => {
+    // Modifiers hang off the front of a product name; the head noun ends it.
+    // "Sweater Vest" is the clean case: both words name garments, and the one
+    // it actually is comes last.
+    assert.equal(classify("Sweater Vest")?.subcategory, "vest");
+    assert.equal(classify("Day Dress")?.category, "dress");
+    // Length would have picked "sweater" here for being the longer word.
+    assert.notEqual(classify("Sweater Vest")?.subcategory, "sweater");
+  });
+
+  test("a garment word the catalogue has no type for is left alone", () => {
+    // "Jacket Dress" names two things this app has no bare term for; guessing
+    // between them would be worse than the dropdown the user already has.
+    assert.equal(classify("Jacket Dress"), null);
+  });
+});
+
+describe("which text is allowed to decide the category", () => {
+  test("the name wins over a description that mentions other garments", () => {
+    const guess = classifyBest(
+      "Slub Cotton Tee",
+      "A lightweight tee to layer under a sweater or a wool coat.",
+    );
+    assert.equal(guess?.subcategory, "t-shirt");
+  });
+
+  test("a name that says nothing hands over to the prose", () => {
+    const guess = classifyBest("The Essential No. 4", "A merino jumper for cold mornings.");
+    assert.equal(guess?.subcategory, "sweater");
+  });
+
+  test("nothing anywhere is left for the user", () => {
+    assert.equal(classifyBest("No. 4", "Made in Portugal."), null);
   });
 });
 

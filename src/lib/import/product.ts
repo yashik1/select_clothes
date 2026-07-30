@@ -75,10 +75,9 @@ const num = (v: unknown): number | undefined => {
 
 /**
  * The app's own catalogue, matched against whatever the shop calls the thing.
- *
- * Longest label first, so "long-sleeve tee" beats "tee" and "dress shirt"
- * doesn't get read as a dress — the substring collisions in garment names are
- * the whole difficulty here.
+ * Substring collisions between garment names are the whole difficulty here —
+ * "dress shirt" against "dress", "tee" inside "long-sleeve tee" — so which
+ * match wins is decided in `classify`, not by the order of this list.
  */
 const CLASSIFIERS: { subcategory: string; category: GarmentCategory; terms: string[] }[] =
   SUBCATEGORY_LIST.map((def) => ({
@@ -87,19 +86,23 @@ const CLASSIFIERS: { subcategory: string; category: GarmentCategory; terms: stri
     terms: [def.key.replace(/-/g, " "), def.label.toLowerCase()],
   }));
 
-/** Shop vocabulary that doesn't match a subcategory key or label. */
+/**
+ * Words a shop uses for a garment that aren't the catalogue's own.
+ *
+ * Every entry here has to *be* a garment. Necklines, fabrics and fits are not:
+ * "crew neck" was mapped to sweater, and since a crew neck is a neckline that
+ * a tee has as readily as a jumper, every "Crew-Neck Tee" in every shop came
+ * back as a sweater. A modifier that names no garment belongs nowhere in this
+ * table — it can only ever outvote the word that does.
+ */
 const SYNONYMS: Record<string, string> = {
   jumper: "sweater",
   pullover: "sweater",
-  "crew neck": "sweater",
-  crewneck: "sweater",
-  knit: "sweater",
   tee: "t-shirt",
   "t shirt": "t-shirt",
   trousers: "dress-trousers",
   pants: "chinos",
   jean: "jeans",
-  denim: "jeans",
   trainers: "sneakers",
   plimsolls: "sneakers",
   overcoat: "wool-coat",
@@ -116,30 +119,57 @@ const SYNONYMS: Record<string, string> = {
 export function classify(text: string): { category: GarmentCategory; subcategory: string } | null {
   const haystack = ` ${text.toLowerCase().replace(/[^a-z0-9]+/g, " ")} `;
 
-  const hits: { subcategory: string; category: GarmentCategory; length: number }[] = [];
+  const hits: { subcategory: string; category: GarmentCategory; length: number; end: number }[] = [];
+  const consider = (subcategory: string, category: GarmentCategory, term: string) => {
+    const at = haystack.lastIndexOf(` ${term} `);
+    if (at >= 0) hits.push({ subcategory, category, length: term.length, end: at + term.length });
+  };
+
   for (const c of CLASSIFIERS) {
-    for (const term of c.terms) {
-      if (term && haystack.includes(` ${term} `)) {
-        hits.push({ subcategory: c.subcategory, category: c.category, length: term.length });
-      }
-    }
+    for (const term of c.terms) if (term) consider(c.subcategory, c.category, term);
   }
   for (const [term, key] of Object.entries(SYNONYMS)) {
-    if (haystack.includes(` ${term} `)) {
-      const def = SUBCATEGORY_LIST.find((d) => d.key === key);
-      if (def) hits.push({ subcategory: key, category: def.category, length: term.length });
-    }
+    const def = SUBCATEGORY_LIST.find((d) => d.key === key);
+    if (def) consider(key, def.category, term);
   }
   if (!hits.length) return null;
 
-  hits.sort((a, b) => b.length - a.length);
+  /*
+   * The last garment word wins. English product names put the head noun at the
+   * end and hang the modifiers off the front — "Slub Cotton Crew-Neck Tee" is
+   * a tee, "Denim Shirt" is a shirt — so position says which word names the
+   * thing far more reliably than length does. Length only breaks ties between
+   * matches ending at the same place, where it correctly prefers the more
+   * specific phrase: "dress shirt" over "shirt".
+   */
+  hits.sort((a, b) => b.end - a.end || b.length - a.length);
   return { category: hits[0].category, subcategory: hits[0].subcategory };
 }
 
 /**
- * "98% Cotton, 2% Elastane" and its many spellings, onto the fibres the warmth
- * and stretch models actually know about.
+ * The name decides, and only a name that says nothing hands over to the prose.
+ *
+ * A description is long and mentions other garments — "layer it under a
+ * jumper" — and a breadcrumb reflects how the shop merchandises rather than
+ * what the thing is. Both are worth reading, neither is worth letting outvote
+ * the title.
  */
+export function classifyBest(
+  primary: string | undefined,
+  ...fallbacks: (string | undefined)[]
+): { category: GarmentCategory; subcategory: string } | null {
+  if (primary) {
+    const fromName = classify(primary);
+    if (fromName) return fromName;
+  }
+  for (const text of fallbacks) {
+    if (!text) continue;
+    const guess = classify(text);
+    if (guess) return guess;
+  }
+  return null;
+}
+
 /**
  * The fibre a shop's wording names.
  *
@@ -162,6 +192,10 @@ function matchFiber(name: string): string | undefined {
   return contained.length ? longest(contained) : undefined;
 }
 
+/**
+ * "98% Cotton, 2% Elastane" and its many spellings, onto the fibres the warmth
+ * and stretch models actually know about.
+ */
 export function parseFabric(text: string): Record<string, number> | undefined {
   if (!text) return undefined;
   const lower = text.toLowerCase();
@@ -221,8 +255,7 @@ export function fromShopify(body: string, productUrl: string): ImportedProduct |
   if (!p || !p.title) return null;
 
   const tags = Array.isArray(p.tags) ? p.tags.join(" ") : (p.tags ?? "");
-  const text = [p.title, p.product_type, tags].filter(Boolean).join(" ");
-  const guess = classify(text);
+  const guess = classifyBest(p.title, p.product_type, tags);
   const fabric = parseFabric(stripTags(p.body_html ?? ""));
 
   const found: string[] = [];
@@ -334,10 +367,8 @@ export function fromJsonLd(html: string, productUrl: string): ImportedProduct | 
   const currency = clean(offer?.priceCurrency);
   if (currency) out.currency = currency;
 
-  const text = [out.name, product.category, product.description]
-    .map((v) => (typeof v === "string" ? v : ""))
-    .join(" ");
-  const guess = classify(text);
+  const text = (v: unknown) => (typeof v === "string" ? v : undefined);
+  const guess = classifyBest(out.name, text(product.category), text(product.description));
   if (guess) {
     out.category = guess.category;
     out.subcategory = guess.subcategory;
@@ -406,7 +437,7 @@ export function fromOpenGraph(html: string, productUrl: string): ImportedProduct
   const currency = metaContent(html, "product:price:currency") ?? metaContent(html, "og:price:currency");
   if (currency) out.currency = currency;
 
-  const guess = classify(`${title} ${metaContent(html, "og:description") ?? ""}`);
+  const guess = classifyBest(title, metaContent(html, "og:description"));
   if (guess) {
     out.category = guess.category;
     out.subcategory = guess.subcategory;

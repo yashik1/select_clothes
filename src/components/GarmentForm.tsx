@@ -786,6 +786,18 @@ function ImportBar({ onImport }: { onImport: (r: ImportResult) => void | Promise
             Filled in from {done.product.retailer ?? "the page"}
             {done.product.found.length ? `: ${done.product.found.join(", ")}` : ""}.
           </p>
+          {/* Named outright, because it is the one imported field that is a
+              guess rather than a reading — and a wrong one silently changes
+              how the garment is scored and drawn. */}
+          {done.product.subcategory && (
+            <p className="mt-1 text-[var(--color-text)]">
+              Read as{" "}
+              <strong className="font-medium">
+                {subcategoryDef(done.product.subcategory, done.product.category ?? "top").label}
+              </strong>{" "}
+              from the name — change it under &ldquo;What is it?&rdquo; if that&apos;s wrong.
+            </p>
+          )}
           <p className="mt-1 text-[var(--color-muted)]">
             Still yours to add: {done.stillNeeded.join(", ")}. A size label alone gets the fit
             verdict to about 45% confidence; the garment&apos;s own measurements take it past 90%.
