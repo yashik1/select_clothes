@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import { buildBody, ellipseAxes, type BodyMesh, type Face, type Vec3 } from "../src/lib/avatar/body.ts";
 import { buildGarments, type GarmentShell } from "../src/lib/avatar/garment.ts";
+import { layerAlpha, swung } from "../src/lib/avatar/render.ts";
 import { SUBCATEGORY_LIST, assumedSleeveLength, sleeveKind } from "../src/lib/data/garmentTypes.ts";
 import type { BodyMeasurements, Garment, GarmentMeasurements } from "../src/lib/types.ts";
 
@@ -667,5 +668,187 @@ describe("sleeves are drawn without being measured", () => {
       const drop = sleeveDrop(bare(def.key, def.category));
       assert.ok(drop <= ARM + 2, `${def.key} sleeve runs ${drop.toFixed(0)}cm down a ${ARM}cm arm`);
     }
+  });
+});
+
+/*
+ * Cloth trailing the body it hangs from.
+ *
+ * The temptation with motion like this is to shear the vertices, which is one
+ * line and looks almost right — until the garment stops being the size it was
+ * measured at, and the picture quietly stops meaning the ease it was built to
+ * show. These pin it to a rotation: shape preserved, held at the top, and
+ * scaled by the garment's own drape rather than applied evenly.
+ */
+describe("cloth swings without changing size", () => {
+  const mesh = buildBody(FULL);
+
+  const piece = (
+    subcategory: string,
+    category: Garment["category"],
+    measurements: GarmentMeasurements = {},
+  ): Garment => ({
+    id: `w-${subcategory}`,
+    name: subcategory,
+    category,
+    subcategory,
+    colors: [{ hex: "#333", share: 1 }],
+    pattern: "solid",
+    patternScale: "medium",
+    fabric: { wool: 1 },
+    formality: 3,
+    fitIntent: "regular",
+    measurements,
+    seasons: ["autumn"],
+    careState: "clean",
+    imageIds: [],
+    wearCount: 0,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  });
+
+  const shellOf = (g: Garment) =>
+    buildGarments(mesh.frame, [g]).shells.find((s) => s.part === "body")!;
+
+  const tight = shellOf(piece("t-shirt", "top", { chestFlat: 50 }));
+  const loose = shellOf(piece("wool-coat", "outerwear", { chestFlat: 72 }));
+
+  test("a garment records how far it stands off the body", () => {
+    assert.ok(tight.drape >= 0, "drape went negative");
+    assert.ok(
+      loose.drape > tight.drape + 3,
+      `a coat at ${loose.drape.toFixed(1)}cm should stand further off than a tee at ${tight.drape.toFixed(1)}cm`,
+    );
+  });
+
+  test("standing still, the vertices are handed back untouched", () => {
+    // Identity, and the same array — the figure is usually not moving, and
+    // rebuilding thousands of vertices per frame for nothing is the easy way
+    // to make a spin stutter.
+    assert.equal(swung(loose, 0), loose.vertices);
+  });
+
+  test("swinging rotates the cloth rather than stretching it", () => {
+    const moved = swung(loose, 0.25);
+    assert.notEqual(moved, loose.vertices);
+    for (let i = 0; i < loose.vertices.length; i++) {
+      const before = loose.vertices[i];
+      const after = moved[i];
+      // A rotation about the body's axis preserves height and the distance
+      // from that axis. A shear preserves neither.
+      assert.ok(Math.abs(after.y - before.y) < 1e-9, "a vertex changed height");
+      const r0 = Math.hypot(before.x, before.z);
+      const r1 = Math.hypot(after.x, after.z);
+      assert.ok(Math.abs(r1 - r0) < 1e-9, `radius changed by ${(r1 - r0).toFixed(6)}cm`);
+    }
+  });
+
+  test("the hem carries the swing and the shoulders hold still", () => {
+    const swing = 0.25;
+    const moved = swung(loose, swing);
+    const angleAt = (i: number) =>
+      Math.atan2(moved[i].z, moved[i].x) - Math.atan2(loose.vertices[i].z, loose.vertices[i].x);
+
+    let topTurn = Infinity;
+    let hemTurn = 0;
+    for (let i = 0; i < loose.vertices.length; i++) {
+      const v = loose.vertices[i];
+      if (Math.abs(v.y - loose.topY) < 0.5) topTurn = Math.min(topTurn, Math.abs(angleAt(i)));
+      if (Math.abs(v.y - loose.bottomY) < 0.5) hemTurn = Math.max(hemTurn, Math.abs(angleAt(i)));
+    }
+    assert.ok(topTurn < 1e-6, `the shoulder turned by ${topTurn.toFixed(4)} rad`);
+    assert.ok(hemTurn > 0.01, `the hem barely moved (${hemTurn.toFixed(4)} rad)`);
+  });
+
+  test("a sleeve swings as much as the coat it belongs to", () => {
+    // Measured alone a sleeve is always within a centimetre of the arm, which
+    // had an oversized coat's sleeves as rigid as a vest's. They are the part
+    // furthest from the axis, so they are what a twist visibly moves.
+    const coat = buildGarments(mesh.frame, [
+      piece("wool-coat", "outerwear", { chestFlat: 72, sleeveLength: 64 }),
+    ]).shells;
+    const body = coat.find((s) => s.part === "body")!;
+    const sleeves = coat.filter((s) => s.part === "sleeve");
+    assert.ok(sleeves.length === 2, "expected two sleeves");
+    for (const sleeve of sleeves) {
+      assert.equal(sleeve.drape, body.drape, "a sleeve did not inherit the coat's slack");
+    }
+  });
+
+  test("a loose garment swings further than a tight one", () => {
+    const sweep = (shell: (typeof loose)) => {
+      const moved = swung(shell, 0.25);
+      let most = 0;
+      for (let i = 0; i < shell.vertices.length; i++) {
+        const before = shell.vertices[i];
+        most = Math.max(most, Math.hypot(moved[i].x - before.x, moved[i].z - before.z));
+      }
+      return most;
+    };
+    assert.ok(
+      sweep(loose) > sweep(tight) * 1.5,
+      `coat swept ${sweep(loose).toFixed(2)}cm, tee ${sweep(tight).toFixed(2)}cm`,
+    );
+  });
+
+  test("swing is bounded, so a fast spin can't wring the cloth round the body", () => {
+    const violent = swung(loose, 5);
+    for (let i = 0; i < loose.vertices.length; i++) {
+      const before = loose.vertices[i];
+      const after = violent[i];
+      assert.ok(Number.isFinite(after.x) && Number.isFinite(after.z));
+      assert.ok(Math.abs(Math.hypot(after.x, after.z) - Math.hypot(before.x, before.z)) < 1e-9);
+    }
+  });
+});
+
+/*
+ * Dressing, layer by layer.
+ *
+ * The order clothes go on is real information the figure had no way of showing
+ * — the depth sorting gets it right in the finished picture, but a picture that
+ * simply appears says nothing about what is under what.
+ */
+describe("clothes arrive in the order they are worn", () => {
+  const span = { lowest: 0, deepest: 4 }; // shoes .. outerwear
+
+  test("nothing is on at the start and everything is on at the end", () => {
+    for (const layer of [0, 1, 2, 3, 4]) {
+      assert.equal(layerAlpha(0, layer, span), 0, `layer ${layer} was already on`);
+      assert.equal(layerAlpha(1, layer, span), 1, `layer ${layer} never finished`);
+    }
+  });
+
+  test("an inner layer is always at least as far along as the one over it", () => {
+    for (let dressed = 0; dressed <= 1; dressed += 0.05) {
+      let previous = Infinity;
+      for (const layer of [0, 1, 2, 3, 4]) {
+        const alpha = layerAlpha(dressed, layer, span);
+        assert.ok(
+          alpha <= previous + 1e-9,
+          `at ${dressed.toFixed(2)}, layer ${layer} outran the one beneath it`,
+        );
+        previous = alpha;
+      }
+    }
+  });
+
+  test("the outer layer really does start later, not just finish later", () => {
+    // Otherwise it is a plain crossfade wearing a stagger's clothes.
+    const early = 0.2;
+    assert.ok(layerAlpha(early, 0, span) > 0, "the innermost layer hadn't started");
+    assert.equal(layerAlpha(early, 4, span), 0, "the coat started with everything else");
+  });
+
+  test("a single garment fades straight in rather than waiting its turn", () => {
+    const alone = { lowest: 3, deepest: 3 };
+    assert.ok(layerAlpha(0.5, 3, alone) > 0.5, "one garment was made to wait for nobody");
+    assert.equal(layerAlpha(1, 3, alone), 1);
+  });
+
+  test("taking them off runs the same ramp backwards", () => {
+    // `dressed` sweeps down on the way out, so the outer layer leaves first —
+    // which is also the order you would take them off.
+    assert.ok(layerAlpha(0.3, 4, span) < layerAlpha(0.3, 0, span));
   });
 });

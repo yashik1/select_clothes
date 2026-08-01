@@ -33,6 +33,21 @@ export interface GarmentShell {
   name: string;
   /** Draw order — base layers first, outerwear last. */
   layer: number;
+  /**
+   * Centimetres of air at the loosest point between this shell and the body.
+   *
+   * The same slack the fit report calls ease, kept so the renderer can let a
+   * loose coat swing and hold a second-skin tee still — motion that comes out
+   * of the measurements says something, motion applied evenly says nothing.
+   *
+   * The widest gap rather than the average one, because every garment is tight
+   * somewhere: they all taper to a neck or a waistband, and averaging those in
+   * put an overcoat and a t-shirt within a centimetre of each other.
+   */
+  drape: number;
+  /** Height range the shell spans, so it can pivot from the top. */
+  topY: number;
+  bottomY: number;
   /** True when this shell rests on ease bands rather than real measurements. */
   estimated: boolean;
 }
@@ -231,6 +246,7 @@ function shellFromStops(
   let firstCx = 0;
   let lastY = 0;
   let lastCx = 0;
+  let drape = 0;
 
   // Above the topmost section there is no body — the shoulder joint just ends.
   // `sectionAt` holds the last section instead, which is right for
@@ -250,6 +266,8 @@ function shellFromStops(
     const a = clear ? Math.max(cloth.a, body.a + clear) : cloth.a;
     const b = clear ? Math.max(cloth.b, body.b + clear) : cloth.b;
     const cx = side * body.cx;
+
+    drape = Math.max(drape, a - body.a);
 
     const start = ring(vertices, stop.y, a, b, cx);
     if (previous === null) {
@@ -277,6 +295,9 @@ function shellFromStops(
     garmentId: garment.id,
     name: garment.name,
     layer,
+    drape,
+    topY: firstY,
+    bottomY: lastY,
     estimated,
   };
 }
@@ -508,6 +529,19 @@ export function buildGarments(frame: BodyFrame, garments: Garment[]): GarmentRen
       continue;
     }
     if (made[0].estimated) estimated.push(garment.name);
+
+    /*
+     * Every piece of one garment swings as much as its loosest piece.
+     *
+     * A sleeve is a tube around an arm, so measured on its own it is always
+     * within a centimetre of the skin — which had a voluminous coat's sleeves
+     * as rigid as a vest's. They are not: an oversized coat has oversized
+     * sleeves, and since a sleeve hangs away from the axis it turns about, it
+     * is the part that visibly moves. The garment's own slack governs the lot.
+     */
+    const loosest = Math.max(...made.map((s) => s.drape));
+    for (const shell of made) shell.drape = loosest;
+
     shells.push(...made);
   }
 

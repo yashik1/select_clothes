@@ -63,6 +63,18 @@ export interface RenderOptions {
   garments?: GarmentShell[];
   /** 0 = body only, 1 = fully dressed. Anything between cross-fades. */
   dressed?: number;
+  /**
+   * Radians the cloth trails the body by, from turning it.
+   *
+   * Fabric doesn't arrive with the shoulders it hangs from. Feeding the
+   * figure's angular velocity in here is what turns a turntable into something
+   * that looks like it has weight — and because the lag each garment takes is
+   * scaled by its own ease, an oversized coat swings and a second-skin tee
+   * barely moves. The motion is the measurement.
+   */
+  swing?: number;
+  /** The contact shadow. On unless a caller wants the figure alone. */
+  showShadow?: boolean;
   /** Device pixel ratio; the canvas is assumed already scaled by it. */
   width: number;
   height: number;
@@ -173,12 +185,44 @@ export function renderBody(
     }
   };
 
+  if (options.showShadow !== false) drawShadow(ctx, mesh, options, project, scale);
+
   collect(mesh.vertices, mesh.faces, theme.skin, 1);
 
   const dressed = options.dressed ?? 1;
+  const swing = options.swing ?? 0;
+
   if (options.garments?.length && dressed > 0.01) {
+    /*
+     * Layers land one after another rather than all at once. It takes no
+     * longer overall, and it makes the order legible: trousers, then the
+     * shirt, then the coat over both — which is the thing the depth sorting
+     * was fixed to get right and had no way of showing.
+     */
+    const layers = options.garments.map((s) => s.layer);
+    const span = { lowest: Math.min(...layers), deepest: Math.max(...layers) };
+
     for (const shell of options.garments) {
-      collect(shell.vertices, shell.faces, hexToRgb(shell.hex), dressed, 3 + shell.layer * 1.2);
+      const alpha = layerAlpha(dressed, shell.layer, span);
+      if (alpha <= 0.01) continue;
+
+      collect(
+        swung(shell, swing),
+        shell.faces,
+        hexToRgb(shell.hex),
+        alpha,
+        /*
+         * Layers are separated widely here because two garments genuinely can
+         * occupy the same space: both get clamped to the body's minimum
+         * standoff wherever each is tighter than the wearer, so a jumper and
+         * the coat over it come out at exactly the same radius below the
+         * waist. The geometry is right — both really are against the body —
+         * and which one you see is a drawing question, so it is settled with
+         * the sort key rather than by inflating the shells and spoiling the
+         * gap the whole picture exists to show.
+         */
+        3 + shell.layer * 2.6,
+      );
     }
   }
 
@@ -205,6 +249,110 @@ export function renderBody(
   ctx.globalAlpha = 1;
 
   if (options.showRings) drawRings(ctx, mesh, options, project, theme);
+}
+
+/** How much of one layer's fade the next one waits for before starting. */
+const LAYER_OVERLAP = 0.45;
+
+/**
+ * How far in a given layer is, at a given point in the dressing.
+ *
+ * Layers land one after another rather than all at once. It takes no longer
+ * overall — the last one still finishes when `dressed` reaches 1 — and it makes
+ * the order legible: trousers, then the shirt, then the coat over both, which
+ * is the thing the depth sorting was fixed to get right and had no way of
+ * showing.
+ */
+export function layerAlpha(
+  dressed: number,
+  layer: number,
+  span: { lowest: number; deepest: number },
+): number {
+  const range = Math.max(1, span.deepest - span.lowest);
+  const start = ((layer - span.lowest) / range) * LAYER_OVERLAP;
+  return Math.max(0, Math.min(1, (dressed - start) / (1 - LAYER_OVERLAP)));
+}
+
+/**
+ * Cloth trailing the body it hangs from.
+ *
+ * The twist runs from nothing at the top of the shell to its full value at the
+ * hem, because a garment is held at the shoulders or the waist and it is the
+ * loose end that lags. How much lag it takes at all comes from the shell's own
+ * drape — the ease the fit report scores — so a coat standing 12cm off the
+ * chest sweeps and a tee at 2cm barely stirs.
+ *
+ * Returns the original vertices untouched when there is nothing to apply,
+ * which is the common case: the figure is usually standing still.
+ */
+export function swung(shell: GarmentShell, swing: number): Vec3[] {
+  const lag = swing * Math.min(1, shell.drape / 9);
+  if (Math.abs(lag) < 1e-4) return shell.vertices;
+
+  const span = shell.topY - shell.bottomY;
+  if (span <= 0) return shell.vertices;
+
+  // Shells hang off the midline — a sleeve is centred on its own arm — so the
+  // twist is about the body's axis, not the shell's, or the sleeve would
+  // rotate about itself and screw into the torso.
+  return shell.vertices.map((v) => {
+    const t = Math.max(0, Math.min(1, (shell.topY - v.y) / span));
+    const angle = lag * t * t; // eased, so the shoulder stays put and the hem carries it
+    const cos = Math.cos(angle), sin = Math.sin(angle);
+    return { x: v.x * cos + v.z * sin, y: v.y, z: -v.x * sin + v.z * cos };
+  });
+}
+
+/**
+ * A soft ellipse where the figure meets the floor.
+ *
+ * Without it the body floats: there is no horizon in this scene and nothing
+ * else to say where the ground is. It is drawn before everything, never sorted
+ * with the polygons, and fades out as the camera drops below the floor — where
+ * a shadow cast on the ground would be behind the viewer.
+ */
+function drawShadow(
+  ctx: CanvasRenderingContext2D,
+  mesh: BodyMesh,
+  options: RenderOptions,
+  project: (p: Vec3) => { x: number; y: number; z: number },
+  scale: number,
+) {
+  const fade = Math.max(0, Math.min(1, (options.camera.pitch + 0.15) / 0.35));
+  if (fade <= 0.01) return;
+
+  let spread = 0;
+  for (const v of mesh.vertices) {
+    if (v.y < mesh.height * 0.08) spread = Math.max(spread, Math.hypot(v.x, v.z));
+  }
+  if (spread <= 0) return;
+
+  const rx = spread * 2.6;
+  const rz = spread * 2.0;
+  const centre = project({ x: 0, y: 0, z: 0 });
+
+  const points: { x: number; y: number }[] = [];
+  for (let i = 0; i <= 40; i++) {
+    const t = (i / 40) * Math.PI * 2;
+    points.push(project({ x: rx * Math.cos(t), y: 0, z: rz * Math.sin(t) }));
+  }
+
+  // The gradient is in screen space, which is a cheat — but a shadow this soft
+  // has no edge to give the cheat away.
+  const radius = Math.max(4, rx * scale);
+  const gradient = ctx.createRadialGradient(centre.x, centre.y, 0, centre.x, centre.y, radius);
+  gradient.addColorStop(0, `rgba(50,48,47,${0.20 * fade})`);
+  gradient.addColorStop(0.55, `rgba(50,48,47,${0.09 * fade})`);
+  gradient.addColorStop(1, "rgba(50,48,47,0)");
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, points[0].y);
+  for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
+  ctx.closePath();
+  ctx.fillStyle = gradient;
+  ctx.fill();
+  ctx.restore();
 }
 
 function drawRings(

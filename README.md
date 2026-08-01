@@ -113,6 +113,12 @@ subcategory's ideal ease band, and the caption says which. Accessories and bags
 have no honest shape on a mannequin, so they're named beside the figure rather
 than drawn badly on it.
 
+Turn it and the cloth trails the shoulders it hangs from, swings past when you
+let go, and settles. How far it swings is the garment's own ease, so an
+oversized coat sweeps and a second-skin tee barely stirs — the motion is the
+measurement, not decoration laid over it. Clothes arrive one layer at a time
+too, which is the only way the figure can show what is worn under what.
+
 It is the same renderer as the You page, drawing into the same 2D canvas — no
 WebGL, no model, nothing fetched.
 
@@ -328,14 +334,14 @@ src/lib/
   tryon.ts                 pluggable render providers
 src/app/                   Next.js App Router pages and API routes
 src/components/            UI, including client-side colour extraction
-tests/                     202 tests over the engines, auth, geometry and import
+tests/                     222 tests over the engines, auth, geometry and import
 ```
 
 ## Development
 
 ```bash
 npm run dev        # dev server
-npm test           # 202 tests
+npm test           # 222 tests
 npm run typecheck  # tsc --noEmit
 npm run build      # production build
 npm run seed       # reset to the demo wardrobe (--force if not empty)

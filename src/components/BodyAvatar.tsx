@@ -49,6 +49,10 @@ export function BodyAvatar({
   // Toggling mid-fade resumes from the current value instead of snapping.
   const dressedRef = useRef(dressable ? 1 : 0);
   const [camera, setCamera] = useState<Camera>({ yaw: -Math.PI / 9, pitch: 0.06, zoom: 1 });
+  // Read by the swing loop, which runs on its own frames and must not restart
+  // every time the camera moves.
+  const cameraRef = useRef(camera);
+  cameraRef.current = camera;
   const [showRings, setShowRings] = useState(showMeasurementsByDefault ?? !dressable);
   const [spinning, setSpinning] = useState(false);
   const [wearing, setWearing] = useState(true);
@@ -124,6 +128,78 @@ export function BodyAvatar({
     };
   }, [box.dpr]);
 
+  /* ------------------------------------------------------------ swing -- */
+  /*
+   * How far the cloth is trailing the body, right now.
+   *
+   * A spring rather than a formula: it builds while the figure turns, carries
+   * on past the moment you let go, and settles back. Kept in a ref and stepped
+   * on its own frame loop, so releasing a drag still has something to watch —
+   * deriving it from the camera alone would freeze the cloth mid-swing the
+   * instant the yaw stopped changing.
+   */
+  const swingRef = useRef(0);
+  const swingVelocity = useRef(0);
+  const [swing, setSwing] = useState(0);
+  const lastYaw = useRef(camera.yaw);
+  const lastTick = useRef(0);
+  const swingFrame = useRef(0);
+
+  useEffect(() => {
+    if (!dressable) return;
+
+    /*
+     * A real spring, carrying its own velocity, rather than a value chasing a
+     * target. Chasing settles in about a tenth of a second — technically a
+     * lag, but gone before the eye finds it, and it can only ever return the
+     * way it came. Cloth released from a turn swings past the body and comes
+     * back, and that overshoot is the whole thing worth watching. Underdamped
+     * on purpose: `damping` sits below the 2·√stiffness that would kill it.
+     */
+    const STIFFNESS = 120;
+    const DAMPING = 13;
+
+    const step = (now: number) => {
+      // Clamped both ways: a tab returning from the background reports a gap
+      // of seconds, and a restarted loop reports one of nothing.
+      const dt = Math.max(0.004, Math.min(0.05, (now - lastTick.current) / 1000));
+      lastTick.current = now;
+
+      const yaw = cameraRef.current.yaw;
+      const turned = yaw - lastYaw.current;
+      lastYaw.current = yaw;
+
+      // Where the cloth wants to be while the body is turning, and zero the
+      // moment it stops — from there the spring's own momentum carries it.
+      const target = Math.max(-0.34, Math.min(0.34, (-turned / dt) * 0.05));
+
+      swingVelocity.current +=
+        ((target - swingRef.current) * STIFFNESS - swingVelocity.current * DAMPING) * dt;
+      const next = swingRef.current + swingVelocity.current * dt;
+
+      const settled =
+        Math.abs(next) < 1e-3 && Math.abs(swingVelocity.current) < 1e-2 && Math.abs(target) < 1e-3;
+      swingRef.current = settled ? 0 : next;
+      if (settled) swingVelocity.current = 0;
+      setSwing((prev) => (Math.abs(prev - swingRef.current) < 3e-4 ? prev : swingRef.current));
+
+      // Stop dead once the cloth has hung still, rather than burning a frame
+      // callback for the rest of the session on a figure nobody is turning.
+      swingFrame.current = settled ? 0 : requestAnimationFrame(step);
+    };
+
+    if (!swingFrame.current) {
+      lastTick.current = performance.now();
+      swingFrame.current = requestAnimationFrame(step);
+    }
+    return () => {
+      cancelAnimationFrame(swingFrame.current);
+      swingFrame.current = 0;
+    };
+    // Re-runs whenever the figure turns, which is exactly when the cloth needs
+    // waking up again.
+  }, [dressable, camera.yaw]);
+
   /* ------------------------------------------------------------- draw -- */
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -150,9 +226,10 @@ export function BodyAvatar({
       showRings,
       garments: clothes?.shells,
       dressed,
+      swing,
       unitLabel: (cm) => formatLength(cm, unit),
     });
-  }, [mesh, clothes, dressed, camera, showRings, height, unit, box]);
+  }, [mesh, clothes, dressed, swing, camera, showRings, height, unit, box]);
 
   /* ---------------------------------------------------------- spinning -- */
   useEffect(() => {
