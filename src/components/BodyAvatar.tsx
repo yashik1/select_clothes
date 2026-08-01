@@ -85,29 +85,74 @@ export function BodyAvatar({
     return () => cancelAnimationFrame(frame);
   }, [wearing, dressable]);
 
-  /* ------------------------------------------------------------- draw -- */
+  /* -------------------------------------------------------- measuring -- */
+  /*
+   * A canvas has two sizes: the bitmap it owns, and the box CSS gives it. When
+   * they disagree the browser stretches the bitmap to fit, and the figure comes
+   * out squashed and soft. The box changes on every window resize and every
+   * layout reflow, and none of those re-ran the draw — so the bitmap stayed at
+   * whatever width the page happened to have when the camera last moved.
+   */
+  const [box, setBox] = useState({ width: 0, dpr: 1 });
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+
+    const measure = () => {
+      const width = canvas.clientWidth;
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      // Same object back when nothing moved, or every scroll-driven reflow
+      // would re-render and redraw for no reason.
+      setBox((prev) => (prev.width === width && prev.dpr === dpr ? prev : { width, dpr }));
+    };
+    measure();
+
+    const observer = new ResizeObserver(measure);
+    observer.observe(canvas);
+
+    // A ResizeObserver says nothing when only the pixel ratio changes, which is
+    // what dragging a window to a second monitor does — same CSS box, twice the
+    // device pixels. The query matches the ratio in force, so it fires on the
+    // way out of it.
+    const media = window.matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+    media.addEventListener("change", measure);
+
+    return () => {
+      observer.disconnect();
+      media.removeEventListener("change", measure);
+    };
+  }, [box.dpr]);
+
+  /* ------------------------------------------------------------- draw -- */
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    // Zero before the first layout, and a zero-width bitmap stretched across a
+    // real box is the worst-looking version of this bug.
+    if (!canvas || box.width <= 0) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const cssWidth = canvas.clientWidth;
-    canvas.width = cssWidth * dpr;
-    canvas.height = height * dpr;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const wanted = { w: Math.round(box.width * box.dpr), h: Math.round(height * box.dpr) };
+    // Assigning either dimension reallocates the bitmap and resets every
+    // context property with it, so it happens only on a real size change —
+    // this effect runs sixty times a second while the figure is spinning.
+    if (canvas.width !== wanted.w || canvas.height !== wanted.h) {
+      canvas.width = wanted.w;
+      canvas.height = wanted.h;
+    }
+    ctx.setTransform(box.dpr, 0, 0, box.dpr, 0, 0);
 
     renderBody(ctx, mesh, {
       camera,
-      width: cssWidth,
+      width: box.width,
       height,
       showRings,
       garments: clothes?.shells,
       dressed,
       unitLabel: (cm) => formatLength(cm, unit),
     });
-  }, [mesh, clothes, dressed, camera, showRings, height, unit]);
+  }, [mesh, clothes, dressed, camera, showRings, height, unit, box]);
 
   /* ---------------------------------------------------------- spinning -- */
   useEffect(() => {
