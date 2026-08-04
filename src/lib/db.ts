@@ -115,6 +115,29 @@ const SCHEMA = `
   CREATE INDEX IF NOT EXISTS session_user_id ON session(user_id);
   CREATE INDEX IF NOT EXISTS session_expiry ON session(expires_at);
 
+  -- Rate limiting. Timestamps here are real timestamptz rather than the ISO
+  -- strings the rest of the schema uses, because the whole counter has to be
+  -- updated and expired inside one statement, and that needs the database's
+  -- own clock rather than the application's.
+  CREATE TABLE IF NOT EXISTS rate_limit (
+    key      TEXT PRIMARY KEY,
+    count    INTEGER NOT NULL,
+    reset_at TIMESTAMPTZ NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS rate_limit_reset ON rate_limit(reset_at);
+
+  -- Single-use password reset tokens. Only the hash is stored, for the same
+  -- reason session tokens are: a leaked database must not hand out live
+  -- credentials.
+  CREATE TABLE IF NOT EXISTS password_reset (
+    token_hash TEXT PRIMARY KEY,
+    user_id    TEXT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
+    expires_at TEXT NOT NULL,
+    used_at    TEXT,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS password_reset_user ON password_reset(user_id);
+
   CREATE TABLE IF NOT EXISTS profile (
     id          TEXT PRIMARY KEY,
     name        TEXT NOT NULL,
@@ -365,6 +388,100 @@ export async function adoptOrphanedData(userId: string): Promise<number> {
 }
 
 /* ----------------------------------------------------------- sessions -- */
+
+/* ---------------------------------------------------------- rate limits -- */
+
+/**
+ * Counts one attempt against `key` and returns the running total.
+ *
+ * One statement, deliberately. Read-then-write would let two requests racing
+ * on the last slot both see room and both take it — `ON CONFLICT` makes the
+ * upsert atomic, and folding the window reset into the same `DO UPDATE` keeps
+ * it that way instead of reintroducing the gap the constraint exists to close.
+ */
+export async function bumpRateLimit(
+  key: string,
+  windowSeconds: number,
+): Promise<{ count: number; resetAt: Date }> {
+  const rows = await q(
+    `INSERT INTO rate_limit (key, count, reset_at)
+       VALUES ($1, 1, now() + make_interval(secs => $2))
+     ON CONFLICT (key) DO UPDATE
+       SET count    = CASE WHEN rate_limit.reset_at <= now() THEN 1
+                           ELSE rate_limit.count + 1 END,
+           reset_at = CASE WHEN rate_limit.reset_at <= now()
+                           THEN now() + make_interval(secs => $2)
+                           ELSE rate_limit.reset_at END
+     RETURNING count, reset_at`,
+    [key, windowSeconds],
+  );
+  return { count: rows[0].count as number, resetAt: rows[0].reset_at as Date };
+}
+
+/** Hands one attempt back, for when it turns out not to have been a guess. */
+export async function refundRateLimit(key: string): Promise<void> {
+  await q("UPDATE rate_limit SET count = greatest(0, count - 1) WHERE key = $1", [key]);
+}
+
+/* ------------------------------------------------------- password reset -- */
+
+/**
+ * Only the hash is stored, exactly as for session tokens: a leaked database
+ * must not contain anything that can be replayed to take over an account.
+ */
+export async function createPasswordReset(
+  tokenHash: string,
+  userId: string,
+  expiresAt: string,
+): Promise<void> {
+  await q(
+    `INSERT INTO password_reset (token_hash, user_id, expires_at, created_at)
+     VALUES ($1, $2, $3, $4)`,
+    [tokenHash, userId, expiresAt, nowIso()],
+  );
+}
+
+/**
+ * Claims a reset token, if it is live, and marks it spent in the same
+ * statement.
+ *
+ * Single-use has to be enforced by the write, not by reading and then writing:
+ * two requests arriving together would both see an unused token and both be
+ * allowed to set a password. The `used_at IS NULL` in the WHERE clause means
+ * exactly one of them updates a row.
+ */
+export async function claimPasswordReset(tokenHash: string): Promise<string | null> {
+  const rows = await q(
+    `UPDATE password_reset
+        SET used_at = $2
+      WHERE token_hash = $1
+        AND used_at IS NULL
+        AND expires_at > $2
+      RETURNING user_id`,
+    [tokenHash, nowIso()],
+  );
+  return rows.length ? (rows[0].user_id as string) : null;
+}
+
+export async function setPassword(userId: string, passwordHash: string): Promise<void> {
+  await q("UPDATE app_user SET password_hash = $2 WHERE id = $1", [userId, passwordHash]);
+}
+
+/**
+ * Signs every device out.
+ *
+ * Run after a password change, because the reason someone resets a password is
+ * usually that they think somebody else has it — and leaving that person's
+ * session alive makes the reset theatre.
+ */
+export async function deleteSessionsFor(userId: string): Promise<void> {
+  await q("DELETE FROM session WHERE user_id = $1", [userId]);
+}
+
+/** Old and spent tokens, cleared opportunistically like expired sessions. */
+export async function purgeExpiredResets(): Promise<void> {
+  await q("DELETE FROM password_reset WHERE expires_at <= $1", [nowIso()]);
+}
 
 export async function createSession(
   tokenHash: string,

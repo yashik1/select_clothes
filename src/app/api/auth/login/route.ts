@@ -7,6 +7,7 @@ import {
 } from "@/lib/auth";
 import { sessionCookie } from "@/lib/server/session";
 import { parseJsonBody } from "@/lib/http";
+import { LIMITS, clientKey, consume, refund, tooMany } from "@/lib/server/rateLimit";
 
 const schema = z.object({
   email: z.string().max(254),
@@ -26,6 +27,20 @@ export async function POST(req: Request) {
   if (!parsed.ok) return parsed.response;
 
   const email = normaliseEmail(parsed.data.email);
+
+  /*
+   * Counted against the address *and* the caller, because either alone leaves
+   * a hole: per-address only lets one attacker work through a list of accounts
+   * unimpeded, and per-caller only is defeated by a botnet — or by forging
+   * `x-forwarded-for`, which nothing can stop and which the per-address limit
+   * does not depend on.
+   */
+  const keys = [`login:email:${email}`, `login:from:${clientKey(req)}`];
+  for (const key of keys) {
+    const verdict = await consume(key, LIMITS.login);
+    if (!verdict.ok) return tooMany(verdict.retryAfter, "sign-in attempts");
+  }
+
   const user = await getUserByEmail(email);
 
   const ok = user
@@ -37,6 +52,9 @@ export async function POST(req: Request) {
   if (!ok || !user) {
     return NextResponse.json({ error: "Email or password is wrong." }, { status: 401 });
   }
+
+  // Getting it right is not a guess, and shouldn't count toward a lockout.
+  await Promise.all(keys.map(refund));
 
   const { token, tokenHash } = newSessionToken();
   await createSession(tokenHash, user.id, sessionExpiry());

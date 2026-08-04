@@ -210,6 +210,25 @@ themselves. Set `FITCHECK_SIGNUP=closed` once the accounts that should exist do
 — the first account is always allowed, or a closed instance could never be set
 up at all.
 
+**Forgotten passwords.** A reset link, valid once and for 45 minutes, with
+only its SHA-256 stored. Using it signs out every device — people reset a
+password because they think somebody else has it, and leaving that session
+alive would make the reset theatre. The request endpoint answers identically
+whether or not the address is registered, for the same reason sign-in does.
+
+Set `RESEND_API_KEY` and the link is emailed. Without it the link goes to the
+server log, which is a real answer when you host this for yourself and a
+useless one otherwise — so the page says which happened rather than implying an
+email is on its way.
+
+**Rate limits.** Sign-in, signup, resets and link imports are all counted in
+Postgres rather than in memory, so they hold across instances. Sign-in counts
+against the address *and* the caller: per-address alone lets one attacker work
+through a list of accounts, per-caller alone is beaten by a botnet or a forged
+`X-Forwarded-For`. A correct password refunds its attempt. Each sign-in runs
+scrypt at N=16384 by design, so unlimited attempts were a denial-of-service
+against the server long before they were a threat to any password.
+
 **Upgrading an instance that predates accounts:** nothing is lost. Rows without
 an owner are invisible to every query until the first account is created, which
 adopts them. Register first, with the address you want to keep.
@@ -226,6 +245,9 @@ adopts them. Register first, with the address you want to keep.
 | `DATABASE_SSL` | `disable`, `require`, or `verify`. Inferred from the host if unset — see below. |
 | `DATABASE_POOL_MAX` | Connections per instance. Default 10. |
 | `FITCHECK_SIGNUP` | `open` (default) or `closed`. The first account is always allowed. |
+| `FITCHECK_PUBLIC_URL` | Where this instance is reachable. **Required for password resets** — the link needs an absolute address, and taking it from the request's `Host` header is how reset links get sent to somebody else's server. Inferred on Railway and Vercel. |
+| `RESEND_API_KEY` | Sends the reset email. Without it the link is written to the server log instead, and the UI says so. |
+| `FITCHECK_EMAIL_FROM` | The From address for that email. |
 | `FITCHECK_TRYON_PROVIDER` | `fal`, `fashn`, `custom`, or `none`. Usually unnecessary — see below. |
 | `FAL_KEY` | Runs FASHN v1.6 through fal.ai, ~$0.075 per garment layer. Setting it switches photo rendering on. |
 | `FASHN_API_KEY` | Same, against FASHN directly. |
@@ -334,14 +356,14 @@ src/lib/
   tryon.ts                 pluggable render providers
 src/app/                   Next.js App Router pages and API routes
 src/components/            UI, including client-side colour extraction
-tests/                     222 tests over the engines, auth, geometry and import
+tests/                     233 tests; the integration ones need DATABASE_URL
 ```
 
 ## Development
 
 ```bash
 npm run dev        # dev server
-npm test           # 222 tests
+npm test           # 233 tests (11 skip without a database)
 npm run typecheck  # tsc --noEmit
 npm run build      # production build
 npm run seed       # reset to the demo wardrobe (--force if not empty)

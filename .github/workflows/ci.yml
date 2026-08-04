@@ -1,0 +1,72 @@
+name: CI
+
+# Runs on every push and every pull request, because until now the only thing
+# standing between a broken commit and production was somebody remembering to
+# run `npm test` by hand.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+concurrency:
+  # A newer push makes an in-flight run irrelevant.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    # The app refuses to start without Postgres, and the schema creates itself
+    # on first connection — so a real database here is what proves the
+    # migration still applies to an empty one.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: fitcheck
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+        ports:
+          - 5432:5432
+
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/fitcheck
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Matches `engines` and .nvmrc. sharp needs >= 20.9 and Nixpacks
+          # otherwise picks 18, which is how the last deploy broke.
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      - name: Types
+        run: npm run typecheck
+
+      - name: Tests
+        run: npm test
+
+      - name: Production build
+        run: npm run build
+
+      # Proves the schema applies from nothing and the app answers, which is
+      # the part a unit test cannot reach.
+      - name: Boot against a real database
+        run: |
+          npm start &
+          for i in $(seq 1 30); do
+            body=$(curl -fsS http://127.0.0.1:3000/api/health 2>/dev/null) && break
+            sleep 2
+          done
+          echo "health: ${body:-no response}"
+          echo "${body}" | grep -q '"db":"up"' || { echo "the app never reached its database"; exit 1; }

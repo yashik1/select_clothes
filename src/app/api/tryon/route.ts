@@ -14,7 +14,14 @@ async function toDataUrl(userId: string, imageId: string): Promise<string | null
   return `data:${image.mime};base64,${image.bytes.toString("base64")}`;
 }
 
+/**
+ * Which provider is configured. Behind auth like everything else: whether an
+ * instance has a paid render provider, and which, is not something a passer-by
+ * needs to know.
+ */
 export async function GET() {
+  const auth = await requireApiUser();
+  if (!auth.ok) return auth.response;
   return NextResponse.json({ provider: providerStatus() });
 }
 

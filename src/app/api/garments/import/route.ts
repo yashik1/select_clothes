@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { parseJsonBody } from "@/lib/http";
 import { requireApiUser } from "@/lib/server/session";
+import { LIMITS, consume, tooMany } from "@/lib/server/rateLimit";
 import { storeImage } from "@/lib/server/storeImage";
 import { ImportError, fetchPublic, fetchPublicText } from "@/lib/import/fetch";
 import {
@@ -30,6 +31,15 @@ export async function POST(req: Request) {
   const auth = await requireApiUser();
   if (!auth.ok) return auth.response;
   const userId = auth.user.id;
+
+  /*
+   * Every call makes the server fetch a URL a stranger chose. Unmetered, an
+   * account is a free proxy: bandwidth to burn, an oracle for probing which
+   * public hosts answer, and a fast route to getting this instance's address
+   * blocked by the shops it is meant to read.
+   */
+  const verdict = await consume(`import:${userId}`, LIMITS.import);
+  if (!verdict.ok) return tooMany(verdict.retryAfter, "link imports");
 
   const parsed = await parseJsonBody(req, schema);
   if (!parsed.ok) return parsed.response;

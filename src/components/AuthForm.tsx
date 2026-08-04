@@ -102,6 +102,19 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
         </form>
       </Card>
 
+      {/* Only on sign-in: offering it during signup is offering to reset a
+          password that does not exist yet. */}
+      {!signup && (
+        <p className="mt-4 text-center text-sm">
+          <Link
+            href="/forgot"
+            className="text-[var(--color-muted)] underline underline-offset-4 hover:text-[var(--color-text)]"
+          >
+            Forgotten your password?
+          </Link>
+        </p>
+      )}
+
       <p className="mt-5 text-center text-sm text-[var(--color-muted)]">
         {signup ? "Already have an account? " : "No account yet? "}
         <Link

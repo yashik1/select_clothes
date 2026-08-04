@@ -17,6 +17,32 @@ const VIEWS: { label: string; yaw: number; pitch: number }[] = [
 
 const MAX_PITCH = 1.05;
 
+/**
+ * Whether the person has asked for less movement.
+ *
+ * A media query in a stylesheet does nothing for a canvas: the figure's spin,
+ * the cloth swing and the dressing cross-fade are all drawn frame by frame in
+ * JavaScript, so they have to ask separately. This is the setting people with
+ * vestibular disorders use to stop exactly this — a body-sized shape rotating
+ * and swaying — so honouring it in CSS and ignoring it here is worse than not
+ * having thought about it at all.
+ */
+function useReducedMotion(): boolean {
+  // False on the server and for the first paint, then corrected. Starting true
+  // would flash the static frame for everyone else.
+  const [reduced, setReduced] = useState(false);
+
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const sync = () => setReduced(media.matches);
+    sync();
+    media.addEventListener("change", sync);
+    return () => media.removeEventListener("change", sync);
+  }, []);
+
+  return reduced;
+}
+
 /*
  * Every control here is pressed repeatedly while comparing views, so they get
  * press feedback but no entrance animation — the scale is instant confirmation
@@ -44,6 +70,7 @@ export function BodyAvatar({
   showMeasurementsByDefault?: boolean;
 }) {
   const dressable = Boolean(garments?.length);
+  const reducedMotion = useReducedMotion();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   // Springs keep velocity when interrupted; this is the same idea in miniature.
   // Toggling mid-fade resumes from the current value instead of snapping.
@@ -73,6 +100,13 @@ export function BodyAvatar({
   useEffect(() => {
     if (!dressable) return;
     const target = wearing ? 1 : 0;
+    if (reducedMotion) {
+      // The change still has to happen — it is what the button is for. It just
+      // happens at once instead of over 220ms.
+      dressedRef.current = target;
+      setDressed(target);
+      return;
+    }
     let frame = 0;
     const start = performance.now();
     const from = dressedRef.current;
@@ -87,7 +121,7 @@ export function BodyAvatar({
     };
     frame = requestAnimationFrame(step);
     return () => cancelAnimationFrame(frame);
-  }, [wearing, dressable]);
+  }, [wearing, dressable, reducedMotion]);
 
   /* -------------------------------------------------------- measuring -- */
   /*
@@ -146,7 +180,16 @@ export function BodyAvatar({
   const swingFrame = useRef(0);
 
   useEffect(() => {
-    if (!dressable) return;
+    // Cloth that sways is the most movement on this figure and the least
+    // load-bearing: nothing is lost by holding it still.
+    if (!dressable || reducedMotion) {
+      // Switched on mid-swing, the cloth would otherwise stay frozen at
+      // whatever angle it had reached — permanently twisted rather than still.
+      swingRef.current = 0;
+      swingVelocity.current = 0;
+      setSwing(0);
+      return;
+    }
 
     /*
      * A real spring, carrying its own velocity, rather than a value chasing a
@@ -198,7 +241,7 @@ export function BodyAvatar({
     };
     // Re-runs whenever the figure turns, which is exactly when the cloth needs
     // waking up again.
-  }, [dressable, camera.yaw]);
+  }, [dressable, camera.yaw, reducedMotion]);
 
   /* ------------------------------------------------------------- draw -- */
   useEffect(() => {
@@ -234,6 +277,12 @@ export function BodyAvatar({
   /* ---------------------------------------------------------- spinning -- */
   useEffect(() => {
     if (!spinning) return;
+    if (reducedMotion) {
+      // Turned off underneath a running spin, so stop it rather than leaving
+      // a button that claims to be on while nothing moves.
+      setSpinning(false);
+      return;
+    }
     let frame = 0;
     let last = performance.now();
     const step = (now: number) => {
@@ -244,7 +293,7 @@ export function BodyAvatar({
     };
     frame = requestAnimationFrame(step);
     return () => cancelAnimationFrame(frame);
-  }, [spinning]);
+  }, [spinning, reducedMotion]);
 
   /* ---------------------------------------------------------- dragging -- */
   const drag = useRef<{ x: number; y: number } | null>(null);

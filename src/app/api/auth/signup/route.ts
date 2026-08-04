@@ -11,6 +11,7 @@ import {
 import { sessionCookie } from "@/lib/server/session";
 import { parseJsonBody } from "@/lib/http";
 import { signupsClosed } from "@/lib/server/policy";
+import { LIMITS, clientKey, consume, tooMany } from "@/lib/server/rateLimit";
 
 const schema = z.object({
   email: z.string().max(254),
@@ -20,6 +21,11 @@ const schema = z.object({
 export async function POST(req: Request) {
   const parsed = await parseJsonBody(req, schema);
   if (!parsed.ok) return parsed.response;
+
+  // Each signup writes a row and runs a scrypt hash, so an open instance is
+  // otherwise a free way to fill someone's database.
+  const verdict = await consume(`signup:from:${clientKey(req)}`, LIMITS.signup);
+  if (!verdict.ok) return tooMany(verdict.retryAfter, "new accounts from this address");
 
   const email = normaliseEmail(parsed.data.email);
   const { password } = parsed.data;
