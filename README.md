@@ -219,7 +219,9 @@ it, and leaving that session alive would make the reset theatre.
 
 The link travels in the URL fragment (`/reset#token=…`), never the query
 string, so it is not written into the server's access log or any proxy's, and
-the page clears it from the address bar once read.
+the page clears it from the address bar once read. A `?token=` in the query is
+still accepted, for links already in flight when this changed and for the mail
+security gateways that unwrap a URL and reissue it without its fragment.
 
 The request endpoint answers identically whether or not the address is
 registered, and the mail is dispatched without being awaited — an awaited call
@@ -253,6 +255,19 @@ A correct password refunds its attempts. Expired counters are swept
 opportunistically, because the table is written by unauthenticated traffic and
 would otherwise grow one permanent row per distinct address forever.
 
+**What the caller-keyed limits are worth.** `X-Forwarded-For` is a header the
+client sends, and Next passes a client's own value through in preference to the
+socket address, so anyone talking to the origin can mint a fresh identity per
+request and walk past both of them. That is survivable rather than fatal
+precisely because of the split above: the limit that cannot be evaded is the
+one keyed on the email address, and it is also the one that can never refuse a
+correct password. A hundred attempts from a hundred forged addresses are
+refused after sixty and the account's owner still signs in — there is a test
+for exactly that. Signups are the softer spot: forging the header gets past the
+per-caller cap, leaving only the per-address one, so an instance that shouldn't
+take strangers should set `FITCHECK_SIGNUP=closed` rather than rely on the
+limiter.
+
 **Your data, and leaving.** `/account` shows what is stored, downloads the lot
 as JSON — profile, every garment with its own measurements, outfits, the whole
 wear history, brand calibrations — and deletes the account. Deletion asks for
@@ -260,9 +275,12 @@ the password and a typed word, then removes every row in every table in one
 transaction. It is immediate and there is no backup to ask for.
 
 **Quotas.** 2,000 garments, 2,000 outfits and 256MB of photos per account, and
-a hard ceiling on the rows any single query returns. All of them sit far above
-what a person with a wardrobe will reach; they exist for a script with a valid
-session, looping, on an instance whose disk everybody shares.
+a hard ceiling on the rows any single query returns. Archived garments don't
+count toward the cap, since archiving is how you're told to make room. The wear
+log has no row cap — a wear is a fact about a day and refusing a real one would
+be wrong — so it is bounded by a per-account rate limit instead. All of these
+sit far above what a person with a wardrobe will reach; they exist for a script
+with a valid session, looping, on an instance whose disk everybody shares.
 
 **Upgrading an instance that predates accounts:** nothing is lost. Rows without
 an owner are invisible to every query until the first account is created, which
@@ -399,6 +417,7 @@ tests/                     261 tests; some need a database, some a running serve
 ```bash
 npm run dev        # dev server
 npm test           # 236 with a database, 222 without (the rest skip cleanly)
+                   # 27 more run over HTTP in CI, against a booted server
 npm run typecheck  # tsc --noEmit
 npm run build      # production build
 npm run seed       # reset to the demo wardrobe (--force if not empty)

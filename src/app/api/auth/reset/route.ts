@@ -3,7 +3,7 @@ import { z } from "zod";
 import { claimPasswordReset, deleteSessionsFor, setPassword } from "@/lib/db";
 import { hashPassword, hashToken, passwordProblem } from "@/lib/auth";
 import { parseJsonBody } from "@/lib/http";
-import { LIMITS, clientKey, consume, tooMany } from "@/lib/server/rateLimit";
+import { LIMITS, caller, consume, tooMany } from "@/lib/server/rateLimit";
 
 const schema = z.object({
   token: z.string().min(10).max(200),
@@ -25,8 +25,14 @@ export async function POST(req: Request) {
   const parsed = await parseJsonBody(req, schema);
   if (!parsed.ok) return parsed.response;
 
-  const verdict = await consume(`reset-submit:${clientKey(req)}`, LIMITS.passwordReset);
-  if (!verdict.ok) return tooMany(verdict.retryAfter, "attempts");
+  // Skipped when nobody can be identified, rather than counted against one
+  // bucket everybody shares — five requests would otherwise stop every
+  // outstanding reset link on the instance from being redeemed.
+  const who = caller(req);
+  if (who.identified) {
+    const verdict = await consume(`reset-submit:${who.id}`, LIMITS.passwordReset);
+    if (!verdict.ok) return tooMany(verdict.retryAfter, "attempts");
+  }
 
   const problem = passwordProblem(parsed.data.password);
   if (problem) return NextResponse.json({ error: problem }, { status: 400 });

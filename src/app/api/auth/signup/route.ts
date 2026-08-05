@@ -11,7 +11,7 @@ import {
 import { sessionCookie } from "@/lib/server/session";
 import { parseJsonBody } from "@/lib/http";
 import { signupsClosed } from "@/lib/server/policy";
-import { LIMITS, clientKey, consume, tooMany } from "@/lib/server/rateLimit";
+import { LIMITS, caller, consume, tooMany } from "@/lib/server/rateLimit";
 
 const schema = z.object({
   email: z.string().max(254),
@@ -37,8 +37,16 @@ export async function POST(req: Request) {
    * delay registering one specific address, which is a far smaller harm than
    * on sign-in — an attacker who wants an address denied can simply register
    * it — so a hard refusal is right here.
+   *
+   * The caller key is skipped entirely when nobody can be identified, rather
+   * than counted against a shared bucket: five requests would otherwise close
+   * registration for the whole instance for an hour.
    */
-  for (const key of [`signup:from:${clientKey(req)}`, `signup:email:${email}`]) {
+  const who = caller(req);
+  const keys = [`signup:email:${email}`];
+  if (who.identified) keys.unshift(`signup:from:${who.id}`);
+
+  for (const key of keys) {
     const verdict = await consume(key, LIMITS.signup);
     if (!verdict.ok) return tooMany(verdict.retryAfter, "attempts");
   }

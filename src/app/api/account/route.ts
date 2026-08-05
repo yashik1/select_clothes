@@ -5,7 +5,7 @@ import { deleteAccount, getUserById } from "@/lib/db";
 import { verifyPassword } from "@/lib/auth";
 import { clearedSessionCookie, requireApiUser } from "@/lib/server/session";
 import { parseJsonBody } from "@/lib/http";
-import { LIMITS, clientKey, consume, tooMany } from "@/lib/server/rateLimit";
+import { LIMITS, consume, tooMany } from "@/lib/server/rateLimit";
 
 const schema = z.object({
   password: z.string().max(200),
@@ -31,9 +31,16 @@ export async function DELETE(req: Request) {
   const parsed = await parseJsonBody(req, schema);
   if (!parsed.ok) return parsed.response;
 
-  // Same budget as a sign-in: this verifies a password, so it is exactly as
-  // useful for guessing one, and exactly as expensive to serve.
-  const verdict = await consume(`delete:${clientKey(req)}`, LIMITS.login);
+  /*
+   * Same budget as a sign-in: this verifies a password, so it is exactly as
+   * useful for guessing one, and exactly as expensive to serve.
+   *
+   * Keyed on the account rather than the caller, because unlike sign-in there
+   * is a session here — an account id cannot be forged, cannot be shared with
+   * a stranger, and cannot be absent. Filling this counter only ever costs the
+   * person already holding the session.
+   */
+  const verdict = await consume(`delete:${auth.user.id}`, LIMITS.login);
   if (!verdict.ok) return tooMany(verdict.retryAfter, "attempts");
 
   if (parsed.data.confirm.trim().toLowerCase() !== PHRASE) {

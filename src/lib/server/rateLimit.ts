@@ -62,6 +62,12 @@ export const LIMITS = {
   resetInbox: { max: 4, windowSeconds: 900 },
   /** Each one makes the server fetch a URL a stranger chose. */
   import: { max: 20, windowSeconds: 600 },
+  /**
+   * Per account. The wear log is the one table with no row cap — a wear is a
+   * fact about a day and refusing a real one would be wrong — so this is what
+   * stops a loop filling it. Sixty an hour is far more than anyone dresses.
+   */
+  wear: { max: 60, windowSeconds: 3600 },
 } satisfies Record<string, Limit>;
 
 /** Counts one attempt against `key` and says whether it is allowed. */
@@ -84,20 +90,61 @@ export async function refund(key: string): Promise<void> {
   await refundRateLimit(key).catch(() => {});
 }
 
+export interface Caller {
+  /** The key component to count against. */
+  id: string;
+  /**
+   * Whether `id` names one caller, rather than standing in for everybody.
+   *
+   * This is the difference between a counter that bounds an attacker and a
+   * counter that bounds the whole instance, and every caller-keyed limit has
+   * to check it before it is allowed to refuse anyone.
+   */
+  identified: boolean;
+}
+
+let warned = false;
+
 /**
  * Who to count against, when there is no account yet.
  *
  * Behind Railway, Vercel and every other proxy the socket address is the
- * proxy's, so the client is the first entry in `x-forwarded-for`. That header
- * is trivially spoofable by anyone talking to the origin directly, which is
- * why it is only ever *one* of the keys a request is counted against and never
- * the only one — the login limiter also counts per address, which no header
- * can forge.
+ * proxy's, so the client is the first entry in `x-forwarded-for`.
+ *
+ * In practice something is nearly always there: `next start` fills the header
+ * in from the socket address when the client sends none, so a deployment with
+ * no proxy at all still gets one identity per host rather than one for
+ * everybody. The `identified: false` path is the case that arises if that ever
+ * stops being true — a different adapter, a custom server, a future release.
+ *
+ * It matters enough to guard because a route that treats a shared constant as
+ * an identity is a disaster rather than a degradation: every visitor on one
+ * counter means eight junk requests lock out the account they name and forty
+ * lock out the instance. Callers check `identified` and downgrade a gate to a
+ * tiebreak rather than assume.
+ *
+ * None of this makes the value *trustworthy*. A client talking straight to the
+ * origin can put whatever it likes in the header, and Next passes that through
+ * in preference to the socket address — so per-caller limits are evadable by
+ * anyone who bothers. That is why nothing important rests on them alone: the
+ * limits that must hold are keyed on the email address, which no header can
+ * change.
  */
-export function clientKey(req: Request): string {
+export function caller(req: Request): Caller {
   const forwarded = req.headers.get("x-forwarded-for");
   const first = forwarded?.split(",")[0]?.trim();
-  return first || req.headers.get("x-real-ip") || "unknown";
+  const id = first || req.headers.get("x-real-ip")?.trim();
+  if (id) return { id, identified: true };
+
+  if (!warned) {
+    warned = true;
+    console.warn(
+      "[ratelimit] No X-Forwarded-For or X-Real-IP on an unauthenticated request. " +
+        "Callers cannot be told apart, so per-caller limits are advisory only. " +
+        "Run this behind a proxy that sets one of those headers.",
+    );
+  }
+  return { id: "unidentified", identified: false };
 }
 
 /** The 429 every limited route returns, with the header a client can act on. */

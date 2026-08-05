@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import { z } from "zod";
 import {
   createPasswordReset, getUserByEmail, purgeExpiredRateLimits, purgeExpiredResets,
@@ -6,7 +6,7 @@ import {
 import { hashToken, newSessionToken, normaliseEmail } from "@/lib/auth";
 import { parseJsonBody } from "@/lib/http";
 import { canEmailStrangers, publicOrigin, sendMail } from "@/lib/server/email";
-import { LIMITS, clientKey, consume, tooMany } from "@/lib/server/rateLimit";
+import { LIMITS, caller, consume, tooMany } from "@/lib/server/rateLimit";
 
 const schema = z.object({ email: z.string().max(254) });
 
@@ -27,13 +27,19 @@ export async function POST(req: Request) {
 
   const email = normaliseEmail(parsed.data.email);
 
-  const from = clientKey(req);
+  const who = caller(req);
 
-  // Keyed on the caller, so exhausting it costs the caller. A hard refusal is
-  // fine here for the same reason it is fine on login: nobody else's ability
-  // to use the endpoint depends on this counter.
-  const byCaller = await consume(`reset:from:${from}`, LIMITS.passwordReset);
-  if (!byCaller.ok) return tooMany(byCaller.retryAfter, "reset requests");
+  /*
+   * Keyed on the caller, so exhausting it costs the caller — but only while
+   * the caller can be told apart from everyone else. Unidentified, this would
+   * be one bucket shared by the world, and five requests would shut the
+   * recovery path for every account on the instance. The per-inbox limit
+   * further down carries it in that case.
+   */
+  if (who.identified) {
+    const byCaller = await consume(`reset:from:${who.id}`, LIMITS.passwordReset);
+    if (!byCaller.ok) return tooMany(byCaller.retryAfter, "reset requests");
+  }
 
   const sameAnswer = NextResponse.json({
     ok: true,
@@ -75,24 +81,38 @@ export async function POST(req: Request) {
   await createPasswordReset(hashToken(token), user.id, expiresAt);
 
   /*
-   * Not awaited, and that is a security property rather than a speed one.
-   * Awaiting an outbound HTTPS call to the mail provider makes a registered
-   * address take a few hundred milliseconds longer to answer than an
-   * unregistered one, and a stopwatch then reads out the membership list that
-   * every identical response above was written to protect.
+   * Sent after the response, not before it, and through `after()` rather than
+   * a bare floating promise.
+   *
+   * Not before, because awaiting an outbound HTTPS call to the mail provider
+   * makes a registered address answer a few hundred milliseconds slower than
+   * an unregistered one, and a stopwatch then reads out the membership list
+   * that every identical response above exists to protect.
+   *
+   * Through `after()`, because on a serverless runtime the invocation can be
+   * frozen or torn down the moment the response is sent — work not registered
+   * this way is not guaranteed to finish, and "your link is on its way"
+   * followed by no email and no log line is the worst failure this endpoint
+   * has. `after()` is what keeps the runtime alive for it.
    */
   const link = `${origin}/reset#token=${token}`;
-  void sendMail({
-    to: user.email,
-    subject: "Reset your FitCheck password",
-    text:
-      `Someone asked to reset the password for this address.\n\n` +
-      `${link}\n\n` +
-      `The link works once and expires in ${VALID_MINUTES} minutes. ` +
-      `If it wasn't you, nothing has changed and you can ignore this.\n`,
-  }).catch((err) => console.error("[reset] could not send the email:", err));
+  after(async () => {
+    try {
+      await sendMail({
+        to: user.email,
+        subject: "Reset your FitCheck password",
+        text:
+          `Someone asked to reset the password for this address.\n\n` +
+          `${link}\n\n` +
+          `The link works once and expires in ${VALID_MINUTES} minutes. ` +
+          `If it wasn't you, nothing has changed and you can ignore this.\n`,
+      });
+    } catch (err) {
+      console.error("[reset] could not send the email:", err);
+    }
+    await purgeExpiredResets().catch(() => {});
+    await purgeExpiredRateLimits().catch(() => {});
+  });
 
-  purgeExpiredResets().catch(() => {});
-  purgeExpiredRateLimits().catch(() => {});
   return sameAnswer;
 }

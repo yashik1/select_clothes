@@ -234,6 +234,40 @@ describe("the sign-in limiter cannot be turned on its owner", options, () => {
     assert.equal(res.status, 200, "a distributed attack locked the owner out");
   });
 
+  test("nor does forging the header, which anyone can do", async () => {
+    /*
+     * `x-forwarded-for` is a client-supplied header, and Next passes a
+     * client's own value through in preference to the socket address — so an
+     * attacker talking to the origin gets a fresh identity per request and
+     * walks past both caller-keyed limits at will.
+     *
+     * That is survivable only because the limit that cannot be evaded — the
+     * one keyed on the email address — is also the one that is not allowed to
+     * refuse a correct password. This test is what says so.
+     */
+    const target = unique("forged");
+    const home = freshSource();
+    await account(target, home);
+
+    const codes: number[] = [];
+    for (let i = 0; i < 100; i++) {
+      const res = await post(
+        "/api/auth/login",
+        { email: target, password: `junk-${i}` },
+        { "x-forwarded-for": `203.0.${Math.floor(i / 256)}.${i % 256}` },
+      );
+      codes.push(res.status);
+    }
+    assert.ok(codes.includes(429), "a hundred forged identities were never refused");
+
+    const res = await post(
+      "/api/auth/login",
+      { email: target, password: PASSWORD },
+      { "x-forwarded-for": home },
+    );
+    assert.equal(res.status, 200, "forging the header locked the owner out");
+  });
+
   test("but one source guessing at one account is still stopped", async () => {
     const target = unique("target");
     await account(target);
@@ -290,5 +324,67 @@ describe("password reset", options, () => {
       { "x-forwarded-for": freshSource() },
     );
     assert.equal(res.status, 400);
+  });
+
+  /*
+   * Needs a genuinely live token, which means minting one directly — the token
+   * itself only ever leaves the server by email. `db.ts` carries no
+   * `server-only` guard, so it can be imported here; the route modules cannot.
+   */
+  const canMintTokens = BASE && process.env.DATABASE_URL;
+  const mintOptions = canMintTokens ? {} : { skip: "needs DATABASE_URL as well" };
+
+  test("a bad password cannot be used to find out whether a token is real", mintOptions, async () => {
+    /*
+     * The reset route checks the password before the token, so a typo never
+     * burns a link somebody has only one of. That ordering is safe only while
+     * the two rejections are indistinguishable: the moment "your password is
+     * too short" and "that link is dead" can be told apart, a short password
+     * becomes a free way to test tokens until one turns out to be real.
+     *
+     * This has to compare a *live* token against a dead one. An earlier
+     * version of this test compared two dead ones and sent a password that
+     * passed validation, so it never reached the branch where the answers
+     * could diverge — it would have passed with the checks in either order,
+     * which is to say it tested nothing.
+     */
+    const db = await import("../src/lib/db.ts");
+    const auth = await import("../src/lib/auth.ts");
+    await db.ready();
+
+    const email = unique("oracle");
+    await account(email);
+    const user = await db.getUserByEmail(email);
+    assert.ok(user, "the account was not created");
+
+    const { token } = auth.newSessionToken();
+    await db.createPasswordReset(
+      auth.hashToken(token),
+      user.id,
+      new Date(Date.now() + 3600_000).toISOString(),
+    );
+
+    const short = "short";
+    const live = await post("/api/auth/reset", { token, password: short }, { "x-forwarded-for": freshSource() });
+    const dead = await post(
+      "/api/auth/reset",
+      { token: "x".repeat(token.length), password: short },
+      { "x-forwarded-for": freshSource() },
+    );
+
+    assert.equal(live.status, dead.status, "the status told a live token from a dead one");
+    assert.deepEqual(await live.json(), await dead.json(), "the message told them apart");
+    assert.equal(live.status, 400);
+
+    // And the live token survived the bad password, which is the other half of
+    // why the checks are in this order.
+    const good = await post(
+      "/api/auth/reset",
+      { token, password: "a-perfectly-good-passphrase" },
+      { "x-forwarded-for": freshSource() },
+    );
+    assert.equal(good.status, 200, "a mistyped password burned the only link");
+
+    await db.pool().query("DELETE FROM app_user WHERE id = $1", [user.id]);
   });
 });

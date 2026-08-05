@@ -123,8 +123,17 @@ function useTokenFromFragment(): { token: string | null; read: boolean } {
   });
 
   useEffect(() => {
-    const raw = window.location.hash.replace(/^#/, "");
-    const token = new URLSearchParams(raw).get("token");
+    const fragment = new URLSearchParams(window.location.hash.replace(/^#/, "")).get("token");
+    /*
+     * The query string is still read, though nothing generates it any more.
+     * Links sent in the 45 minutes before this change deploys carry `?token=`
+     * and are still perfectly valid; refusing them would tell people with a
+     * working link that it was broken. Some mail security gateways also
+     * unwrap and reissue URLs in a way that drops the fragment, and this is
+     * the only thing standing between that and an unusable reset.
+     */
+    const query = new URLSearchParams(window.location.search).get("token");
+    const token = fragment ?? query;
     setState({ token, read: true });
 
     if (token) {
@@ -132,7 +141,7 @@ function useTokenFromFragment(): { token: string | null; read: boolean } {
        * Out of the address bar, so it does not end up in browser history, in a
        * screenshot, or in the URL the next person to borrow this laptop finds
        * in the autocomplete list. The token is in state by now; the page does
-       * not need the fragment again.
+       * not need the URL again.
        */
       window.history.replaceState(null, "", window.location.pathname);
     }

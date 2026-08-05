@@ -503,25 +503,65 @@ export async function createPasswordReset(
  * over after its owner believes they have secured it.
  */
 export async function claimPasswordReset(tokenHash: string): Promise<string | null> {
-  const rows = await q(
-    `WITH claimed AS (
-       UPDATE password_reset
-          SET used_at = $2
-        WHERE token_hash = $1
-          AND used_at IS NULL
-          AND expires_at > $2
-        RETURNING user_id
-     ), siblings AS (
-       UPDATE password_reset
-          SET used_at = $2
-        WHERE user_id IN (SELECT user_id FROM claimed)
-          AND token_hash <> $1
-          AND used_at IS NULL
-     )
-     SELECT user_id FROM claimed`,
-    [tokenHash, nowIso()],
-  );
-  return rows.length ? (rows[0].user_id as string) : null;
+  await ready();
+  const client = await pool().connect();
+  try {
+    await client.query("BEGIN");
+
+    // Which account this token belongs to, before taking any lock — an
+    // unknown token does no work at all.
+    const found = await client.query("SELECT user_id FROM password_reset WHERE token_hash = $1", [
+      tokenHash,
+    ]);
+    if (!found.rows.length) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+    const userId = found.rows[0].user_id as string;
+
+    /*
+     * Everything below touches two rows in an order set by which token was
+     * presented, and two claims on two different tokens of the same account
+     * therefore reach for each other's rows in opposite order. That is a
+     * deadlock, and it is not theoretical: as a single statement it fired 154
+     * times in 720 concurrent claims. The exclusive claim was never lost — the
+     * database refused one side rather than letting both through — but the
+     * refusal surfaced as a 500 where the caller should have been told the
+     * link was already used.
+     *
+     * One lock per account, taken first and released with the transaction,
+     * removes the cycle: claims for one account queue, claims for different
+     * accounts never meet.
+     */
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [userId]);
+
+    const now = nowIso();
+    const claimed = await client.query(
+      `UPDATE password_reset SET used_at = $2
+        WHERE token_hash = $1 AND used_at IS NULL AND expires_at > $2
+        RETURNING user_id`,
+      [tokenHash, now],
+    );
+    if (!claimed.rows.length) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    // Every other live link for this account goes with it.
+    await client.query(
+      `UPDATE password_reset SET used_at = $2
+        WHERE user_id = $1 AND token_hash <> $3 AND used_at IS NULL`,
+      [userId, now, tokenHash],
+    );
+
+    await client.query("COMMIT");
+    return userId;
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 export async function setPassword(userId: string, passwordHash: string): Promise<void> {
@@ -864,7 +904,9 @@ export async function deleteWearLog(userId: string, id: string): Promise<void> {
 /* ----------------------------------------------------------- calibration -- */
 
 export async function listCalibrations(userId: string): Promise<BrandCalibration[]> {
-  const rows = await q("SELECT * FROM brand_calibration WHERE user_id = $1", [userId]);
+  const rows = await q(`SELECT * FROM brand_calibration WHERE user_id = $1 LIMIT ${MAX_ROWS}`, [
+    userId,
+  ]);
   return rows.map((r) => ({
     brand: r.brand as string,
     category: r.category as BrandCalibration["category"],
@@ -888,8 +930,11 @@ export async function saveCalibration(userId: string, c: BrandCalibration): Prom
 
 export async function listFitFeedback(userId: string, garmentId?: string): Promise<FitFeedback[]> {
   const rows = garmentId
-    ? await q("SELECT * FROM fit_feedback WHERE user_id = $1 AND garment_id = $2", [userId, garmentId])
-    : await q("SELECT * FROM fit_feedback WHERE user_id = $1", [userId]);
+    ? await q(
+        `SELECT * FROM fit_feedback WHERE user_id = $1 AND garment_id = $2 LIMIT ${MAX_ROWS}`,
+        [userId, garmentId],
+      )
+    : await q(`SELECT * FROM fit_feedback WHERE user_id = $1 LIMIT ${MAX_ROWS}`, [userId]);
   return rows.map((r) => ({
     id: r.id as string,
     garmentId: r.garment_id as string,
@@ -953,12 +998,27 @@ export async function imageBytesUsed(userId: string): Promise<number> {
   return Number(r?.used ?? 0);
 }
 
-/** Rows an account owns, for the two caps that are counted rather than sized. */
+/**
+ * Rows an account owns, for the two caps that are counted rather than sized.
+ *
+ * Archived garments do not count. They are hidden rather than deleted, and a
+ * cap that counted them would refuse a new item while telling the person to
+ * archive something — which would have changed nothing.
+ *
+ * `table` is interpolated because a table name cannot be a bind parameter.
+ * Both call sites pass a literal from the union above, so nothing from a
+ * request reaches this string.
+ */
 export async function countOwned(
   userId: string,
   table: "garment" | "outfit",
 ): Promise<number> {
-  const r = await one(`SELECT count(*)::int AS n FROM ${table} WHERE user_id = $1`, [userId]);
+  const r = await one(
+    table === "garment"
+      ? "SELECT count(*)::int AS n FROM garment WHERE user_id = $1 AND archived_at IS NULL"
+      : "SELECT count(*)::int AS n FROM outfit WHERE user_id = $1",
+    [userId],
+  );
   return (r?.n as number) ?? 0;
 }
 

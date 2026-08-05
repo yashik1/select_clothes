@@ -8,6 +8,7 @@ import { computeCalibrations } from "@/lib/engine/calibration";
 import { occasionSchema } from "@/lib/validate";
 import { parseJsonBody } from "@/lib/http";
 import { requireApiUser } from "@/lib/server/session";
+import { LIMITS, consume, tooMany } from "@/lib/server/rateLimit";
 
 const schema = z.object({
   garmentIds: z.array(z.string()).min(1),
@@ -37,6 +38,19 @@ export async function POST(req: Request) {
   if (!parsed.ok) return parsed.response;
   const input = parsed.data;
   const now = nowIso();
+
+  /*
+   * `wear_log` and `fit_feedback` are the two tables with no ceiling on how
+   * many rows an account may own — a wear is a fact about a day, so capping
+   * the total would eventually refuse a real one. This route is therefore the
+   * one place a session with a loop could still fill the disk, and its own
+   * export would then be an unbounded response. A per-account rate limit
+   * bounds it without ever bounding a person: nobody logs sixty outfits in an
+   * hour, and the counter is keyed on the account, so filling it costs only
+   * the account that filled it.
+   */
+  const verdict = await consume(`wear:${userId}`, LIMITS.wear);
+  if (!verdict.ok) return tooMany(verdict.retryAfter, "entries");
 
   await logWear(userId, {
     id: newId(),
