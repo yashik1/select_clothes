@@ -124,7 +124,7 @@ export function Button({
 }: {
   children: React.ReactNode;
   href?: string;
-  variant?: "primary" | "ghost";
+  variant?: "primary" | "ghost" | "danger";
   className?: string;
 } & React.ButtonHTMLAttributes<HTMLButtonElement>) {
   // Named properties rather than `all`: `all` transitions layout too, and the
@@ -133,10 +133,15 @@ export function Button({
     "inline-flex items-center justify-center rounded-full px-5 py-2.5 text-sm font-medium " +
     "transition-[transform,background-color,border-color,color] duration-150 ease-[var(--ease-out)] " +
     "active:scale-[0.97] disabled:active:scale-100";
+  // Danger is filled rather than outlined on purpose: an irreversible action
+  // should not look like a secondary one, and red text on a pale button reads
+  // as a warning about the page rather than a description of the button.
   const styles =
     variant === "primary"
       ? "bg-[var(--color-ink)] text-white hover:bg-[var(--color-accent-deep)] disabled:bg-[var(--color-raised)] disabled:text-[var(--color-faint)]"
-      : "border border-[var(--color-line)] bg-[var(--color-paper)] text-[var(--color-text)] hover:border-[var(--color-ink)] disabled:text-[var(--color-faint)]";
+      : variant === "danger"
+        ? "bg-[var(--color-bad)] text-white hover:brightness-95 disabled:bg-[var(--color-raised)] disabled:text-[var(--color-faint)]"
+        : "border border-[var(--color-line)] bg-[var(--color-paper)] text-[var(--color-text)] hover:border-[var(--color-ink)] disabled:text-[var(--color-faint)]";
   if (href) {
     return (
       <Link href={href} className={`${base} ${styles} ${className}`}>

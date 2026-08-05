@@ -34,11 +34,32 @@ export interface Limit {
  * ~100ms of CPU by design. Unlimited attempts are a denial-of-service against
  * the server long before they are a threat to any password, so this protects
  * the instance as much as the account.
+ *
+ * Note which key each limit is meant for. A limit keyed on something the
+ * caller supplies about *somebody else* — an email address, most of all — is
+ * a different kind of object from one keyed on the caller, and mixing them up
+ * is how a rate limiter becomes a way to lock a stranger out of their own
+ * account. See the comment on the login route.
  */
 export const LIMITS = {
+  /** Per caller *and* address together: one source guessing at one account. */
   login: { max: 8, windowSeconds: 300 },
+  /** Per caller, across every account: one source spraying many accounts. */
+  loginSource: { max: 40, windowSeconds: 300 },
+  /**
+   * Per address, across every caller. Deliberately loose, and deliberately
+   * never allowed to refuse a correct password — it exists to stop a
+   * distributed attack grinding on one account, not to lock its owner out.
+   */
+  loginAddress: { max: 60, windowSeconds: 900 },
   signup: { max: 5, windowSeconds: 3600 },
+  /** Per caller. A hard refusal, because it is the caller's own budget. */
   passwordReset: { max: 5, windowSeconds: 3600 },
+  /**
+   * Per recipient address, across every caller. Short, because anyone can fill
+   * it and nobody should be shut out of recovering their account for long.
+   */
+  resetInbox: { max: 4, windowSeconds: 900 },
   /** Each one makes the server fetch a URL a stranger chose. */
   import: { max: 20, windowSeconds: 600 },
 } satisfies Record<string, Limit>;

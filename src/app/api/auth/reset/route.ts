@@ -13,10 +13,13 @@ const schema = z.object({
 /**
  * Finishes a password reset.
  *
- * The token is claimed before the new password is checked, so a guessed token
- * is spent whether or not the rest of the request was valid — otherwise the
- * endpoint would say "that token was fine, your password was too short", which
- * turns it into an oracle for testing tokens for free.
+ * The password is checked before the token is claimed, deliberately: a typo
+ * that produces too short a password must not burn a link somebody has only
+ * one of. That ordering is safe here only because the two failures are
+ * indistinguishable from outside — a short password returns the same 400
+ * whether the token was live or nonsense, so the endpoint never becomes a way
+ * to test tokens for free. Reordering these two checks would break that, so
+ * they belong in this order and not the other.
  */
 export async function POST(req: Request) {
   const parsed = await parseJsonBody(req, schema);

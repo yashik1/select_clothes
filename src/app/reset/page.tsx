@@ -1,5 +1,3 @@
-import Link from "next/link";
-import { Card } from "@/components/ui";
 import { ResetForm } from "@/components/ResetForm";
 
 export const dynamic = "force-dynamic";
@@ -10,32 +8,15 @@ export const metadata = { title: "Choose a new password — FitCheck" };
  * live session is exactly what happens when somebody suspects their account is
  * compromised and wants the password changed, and bouncing them to the home
  * page would take the one tool they came for.
+ *
+ * The token arrives in the fragment (`/reset#token=…`), not the query string,
+ * so the page itself never sees it — a fragment is not sent to the server at
+ * all. A live credential in a query string is written into the server's access
+ * log, and into whatever CDN, proxy or platform logging sits in front of it,
+ * every one of which keeps full URLs by default. Reading it on the client
+ * instead costs nothing, because the form was already a client component whose
+ * only use for the token is to post it back.
  */
-export default async function ResetPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ token?: string }>;
-}) {
-  const { token } = await searchParams;
-
-  if (!token) {
-    return (
-      <div className="mx-auto max-w-md py-10">
-        <h1 className="display text-4xl">That link is incomplete</h1>
-        <Card className="mt-6 p-5 text-[0.9375rem]">
-          <p>
-            The address is missing its token, which usually means a mail client broke the link
-            across two lines. Copy the whole thing, or ask for a new one.
-          </p>
-          <p className="mt-4">
-            <Link href="/forgot" className="underline underline-offset-4">
-              Send a new link
-            </Link>
-          </p>
-        </Card>
-      </div>
-    );
-  }
-
-  return <ResetForm token={token} />;
+export default function ResetPage() {
+  return <ResetForm />;
 }

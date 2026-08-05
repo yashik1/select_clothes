@@ -77,6 +77,28 @@ describe("rate limiting", options, () => {
     assert.equal((await consume(k, limit)).ok, true, "refunding did not free an attempt");
   });
 
+  test("counters whose window closed long ago are swept up", async () => {
+    // The table is written by unauthenticated traffic — one row per distinct
+    // email address and per distinct forwarded-for value — so without a sweep
+    // it is a slower version of the attack the limiter exists to stop.
+    const stale = key();
+    await db.pool().query(
+      "INSERT INTO rate_limit (key, count, reset_at) VALUES ($1, 1, now() - interval '2 hours')",
+      [stale],
+    );
+    const live = key();
+    await consume(live, { max: 5, windowSeconds: 3600 });
+
+    await db.purgeExpiredRateLimits();
+
+    const rows = await db
+      .pool()
+      .query("SELECT key FROM rate_limit WHERE key IN ($1, $2)", [stale, live]);
+    const keys = rows.rows.map((r) => r.key);
+    assert.ok(!keys.includes(stale), "an expired counter was left behind");
+    assert.ok(keys.includes(live), "a live counter was swept up with the dead ones");
+  });
+
   test("simultaneous attempts cannot both slip through the last slot", async () => {
     // The whole reason it is one statement. Read-then-write would let two
     // requests both see "one left" and both take it.
@@ -108,7 +130,7 @@ describe("password reset tokens", options, () => {
   });
 
   after(async () => {
-    await db.pool().query("DELETE FROM app_user WHERE email LIKE 'reset-test-%@example.invalid'");
+    await db.pool().query("DELETE FROM app_user WHERE email LIKE 'reset-test-%@example.invalid' OR email LIKE 'reset-test-other-%@example.invalid'");
     // Closed once, here, at the end of the last suite that needs it — the pool
     // is a singleton, so ending it in an earlier teardown kills the next one.
     await db.pool().end();
@@ -154,6 +176,48 @@ describe("password reset tokens", options, () => {
       Array.from({ length: 8 }, () => db.claimPasswordReset(auth.hashToken(token))),
     );
     assert.equal(results.filter(Boolean).length, 1, "a token was claimed more than once");
+  });
+
+  test("using one link kills every other live link for that account", async () => {
+    /*
+     * Asking for a second link because the first seemed lost is the ordinary
+     * case. If the first keeps working for the rest of its 45 minutes, then an
+     * old message — in an inbox, a forwarded thread, or a mail provider's
+     * logs — can still take the account over after its owner believes they
+     * have secured it.
+     */
+    const first = auth.newSessionToken();
+    const second = auth.newSessionToken();
+    await db.createPasswordReset(auth.hashToken(first.token), userId, future());
+    await db.createPasswordReset(auth.hashToken(second.token), userId, future());
+
+    assert.equal(await db.claimPasswordReset(auth.hashToken(second.token)), userId);
+    assert.equal(
+      await db.claimPasswordReset(auth.hashToken(first.token)),
+      null,
+      "an older reset link still worked after a newer one was used",
+    );
+  });
+
+  test("one account's links are not spent by another account's reset", async () => {
+    const other = await db.createUser(
+      `reset-test-other-${Date.now()}@example.invalid`,
+      await auth.hashPassword("another-passphrase"),
+    );
+    assert.ok(other);
+
+    const mine = auth.newSessionToken();
+    const theirs = auth.newSessionToken();
+    await db.createPasswordReset(auth.hashToken(mine.token), userId, future());
+    await db.createPasswordReset(auth.hashToken(theirs.token), other.id, future());
+
+    await db.claimPasswordReset(auth.hashToken(mine.token));
+
+    assert.equal(
+      await db.claimPasswordReset(auth.hashToken(theirs.token)),
+      other.id,
+      "resetting one account invalidated a different account's link",
+    );
   });
 
   test("changing a password signs every device out", async () => {

@@ -211,10 +211,21 @@ themselves. Set `FITCHECK_SIGNUP=closed` once the accounts that should exist do
 up at all.
 
 **Forgotten passwords.** A reset link, valid once and for 45 minutes, with
-only its SHA-256 stored. Using it signs out every device — people reset a
-password because they think somebody else has it, and leaving that session
-alive would make the reset theatre. The request endpoint answers identically
-whether or not the address is registered, for the same reason sign-in does.
+only its SHA-256 stored. Using one link spends every other live link for that
+account, so an older message left in an inbox cannot take the account over
+after its owner believes they have secured it. Completing a reset signs out
+every device — people reset a password because they think somebody else has
+it, and leaving that session alive would make the reset theatre.
+
+The link travels in the URL fragment (`/reset#token=…`), never the query
+string, so it is not written into the server's access log or any proxy's, and
+the page clears it from the address bar once read.
+
+The request endpoint answers identically whether or not the address is
+registered, and the mail is dispatched without being awaited — an awaited call
+to the mail provider makes a registered address answer a few hundred
+milliseconds slower, which a stopwatch reads out as the membership list every
+identical response exists to protect.
 
 Set `RESEND_API_KEY` and the link is emailed. Without it the link goes to the
 server log, which is a real answer when you host this for yourself and a
@@ -222,12 +233,36 @@ useless one otherwise — so the page says which happened rather than implying a
 email is on its way.
 
 **Rate limits.** Sign-in, signup, resets and link imports are all counted in
-Postgres rather than in memory, so they hold across instances. Sign-in counts
-against the address *and* the caller: per-address alone lets one attacker work
-through a list of accounts, per-caller alone is beaten by a botnet or a forged
-`X-Forwarded-For`. A correct password refunds its attempt. Each sign-in runs
-scrypt at N=16384 by design, so unlimited attempts were a denial-of-service
-against the server long before they were a threat to any password.
+Postgres rather than in memory, so they hold across instances. Each sign-in
+runs scrypt at N=16384 by design, so unlimited attempts were a
+denial-of-service against the server long before they were a threat to any
+password.
+
+The distinction that matters is *what a counter is keyed on*. Counters keyed on
+the caller — per source, and per source-and-address together — are hard gates:
+the only budget a request can exhaust is its own. The counter keyed on the
+email address alone is not a gate, and deliberately cannot refuse a correct
+password. It has to work that way. An earlier version treated it as a gate, and
+nine junk requests naming an address locked its owner out of every device for
+five minutes, repeatable indefinitely, at no cost to the attacker — a rate
+limiter keyed on something a stranger can type is a denial-of-service weapon
+aimed at the person it was added to protect. So it now shapes only the answer
+given to a *wrong* password. `tests/routes.test.ts` holds that as a regression.
+
+A correct password refunds its attempts. Expired counters are swept
+opportunistically, because the table is written by unauthenticated traffic and
+would otherwise grow one permanent row per distinct address forever.
+
+**Your data, and leaving.** `/account` shows what is stored, downloads the lot
+as JSON — profile, every garment with its own measurements, outfits, the whole
+wear history, brand calibrations — and deletes the account. Deletion asks for
+the password and a typed word, then removes every row in every table in one
+transaction. It is immediate and there is no backup to ask for.
+
+**Quotas.** 2,000 garments, 2,000 outfits and 256MB of photos per account, and
+a hard ceiling on the rows any single query returns. All of them sit far above
+what a person with a wardrobe will reach; they exist for a script with a valid
+session, looping, on an instance whose disk everybody shares.
 
 **Upgrading an instance that predates accounts:** nothing is lost. Rows without
 an owner are invisible to every query until the first account is created, which
@@ -356,14 +391,14 @@ src/lib/
   tryon.ts                 pluggable render providers
 src/app/                   Next.js App Router pages and API routes
 src/components/            UI, including client-side colour extraction
-tests/                     233 tests; the integration ones need DATABASE_URL
+tests/                     261 tests; some need a database, some a running server
 ```
 
 ## Development
 
 ```bash
 npm run dev        # dev server
-npm test           # 233 tests (11 skip without a database)
+npm test           # 236 with a database, 222 without (the rest skip cleanly)
 npm run typecheck  # tsc --noEmit
 npm run build      # production build
 npm run seed       # reset to the demo wardrobe (--force if not empty)

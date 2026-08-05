@@ -4,12 +4,13 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Button, Card } from "@/components/ui";
+import { Status, useStatus } from "@/components/Status";
 
 export function AuthForm({ mode }: { mode: "login" | "signup" }) {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const status = useStatus();
   const [busy, setBusy] = useState(false);
 
   const signup = mode === "signup";
@@ -17,7 +18,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
-    setError(null);
+    status.busy(signup ? "Creating your account…" : "Signing in…");
 
     const res = await fetch(`/api/auth/${signup ? "signup" : "login"}`, {
       method: "POST",
@@ -33,7 +34,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
     }
 
     const payload = await res.json().catch(() => ({}));
-    setError(payload.error ?? "Something went wrong. Try again.");
+    status.fail(payload.error ?? "Something went wrong. Try again.");
     setBusy(false);
   }
 
@@ -87,14 +88,21 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
             )}
           </div>
 
-          {error && (
-            <p
-              role="alert"
-              className="rounded-lg border border-[var(--color-bad)]/40 bg-[var(--color-bad)]/10 p-2.5 text-sm text-[var(--color-bad)]"
-            >
-              {error}
-            </p>
-          )}
+          {/*
+            Always in the tree, styled to nothing when empty. A live region
+            that is *added* to the page already holding its text is frequently
+            never announced — the region has to be there before the change for
+            the change to register as one. `{error && …}` was exactly that
+            mistake, so the `role="alert"` it carried did very little.
+          */}
+          <Status
+            {...status.props}
+            className={
+              status.props.message
+                ? "rounded-lg border border-[var(--color-bad)]/40 bg-[var(--color-bad)]/10 p-2.5 !text-sm"
+                : ""
+            }
+          />
 
           <Button type="submit" disabled={busy} className="w-full justify-center py-3">
             {busy ? "One moment…" : signup ? "Create account" : "Sign in"}

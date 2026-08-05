@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { readFormBody } from "@/lib/http";
 import { requireApiUser } from "@/lib/server/session";
 import { REFUSED_MIME, describeImageError, normaliseImage } from "@/lib/server/storeImage";
-import { newId, nowIso, saveImage } from "@/lib/db";
+import { QUOTA, imageBytesUsed, newId, nowIso, saveImage } from "@/lib/db";
 
 /**
  * Originals can be large — a phone HEIC or a 48MP JPEG runs to tens of
@@ -59,6 +59,24 @@ export async function POST(req: Request) {
   } catch (err) {
     console.error("[images] conversion failed:", err);
     return NextResponse.json({ error: describeImageError(err) }, { status: 415 });
+  }
+
+  /*
+   * Checked after conversion, against the size that will actually be stored —
+   * measuring the upload instead would reject a 20MB HEIC that becomes a 300KB
+   * JPEG. There is a race here if someone uploads in parallel, and it does not
+   * matter: the worst case is a few megabytes over a 256MB line.
+   */
+  const used = await imageBytesUsed(userId);
+  if (used + bytes.length > QUOTA.imageBytes) {
+    return NextResponse.json(
+      {
+        error:
+          `Your photos already use ${(used / 1024 / 1024).toFixed(0)}MB of ` +
+          `${(QUOTA.imageBytes / 1024 / 1024).toFixed(0)}MB. Delete some garments to make room.`,
+      },
+      { status: 413 },
+    );
   }
 
   try {

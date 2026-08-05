@@ -70,3 +70,13 @@ jobs:
           done
           echo "health: ${body:-no response}"
           echo "${body}" | grep -q '"db":"up"' || { echo "the app never reached its database"; exit 1; }
+
+      # Every route handler imports `server-only`, which throws the moment it is
+      # loaded outside a bundler — so what an anonymous request actually gets
+      # back can only be tested over HTTP, against the server started above.
+      # These are skipped entirely in the `npm test` step, where nothing is
+      # listening; this is the only place they run.
+      - name: The auth boundary, over HTTP
+        env:
+          FITCHECK_TEST_URL: http://127.0.0.1:3000
+        run: npx tsx --test tests/routes.test.ts

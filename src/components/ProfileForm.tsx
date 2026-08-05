@@ -24,6 +24,7 @@ import type {
   Unit,
 } from "@/lib/types";
 import { Button, Card, ConfidenceBar, Pill, SectionTitle, Swatch } from "./ui";
+import { Status, useStatus } from "./Status";
 import { BodyAvatar } from "./BodyAvatar";
 import { ImageUploader } from "./ImageUploader";
 
@@ -65,7 +66,7 @@ export function ProfileForm({ initial }: { initial: Profile }) {
 
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const status = useStatus();
 
   /* Derived analysis runs client-side from the same pure functions the server
      uses, so the palette and body shape update as you type. */
@@ -129,7 +130,7 @@ export function ProfileForm({ initial }: { initial: Profile }) {
     // Saving an impossible body is worse than not saving: every score the app
     // produces afterwards is computed against it, confidently and wrongly.
     if (problems.length) {
-      setError(
+      status.fail(
         problems.length === 1
           ? "One measurement can't be right — see the field marked in red."
           : `${problems.length} measurements can't be right — see the fields marked in red.`,
@@ -137,7 +138,7 @@ export function ProfileForm({ initial }: { initial: Profile }) {
       return;
     }
     setSaving(true);
-    setError(null);
+    status.busy("Saving…");
     try {
       const res = await fetch("/api/profile", {
         method: "PUT",
@@ -161,8 +162,9 @@ export function ProfileForm({ initial }: { initial: Profile }) {
         throw new Error(json.error ?? `Save failed (${res.status})`);
       }
       setSaved(true);
+      status.say("Profile saved.");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Something went wrong.");
+      status.fail(e instanceof Error ? e.message : "Something went wrong.");
     } finally {
       setSaving(false);
     }
@@ -181,8 +183,12 @@ export function ProfileForm({ initial }: { initial: Profile }) {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          {saved && <span className="text-xs text-[var(--color-good)]">Saved</span>}
-          {error && <span className="max-w-sm text-xs text-[var(--color-bad)]">{error}</span>}
+          {/*
+            One live region for the page, not one per save button — two
+            regions holding the same sentence get announced twice. This is the
+            one; the button at the foot of the form shares it.
+          */}
+          <Status {...status.props} className="max-w-sm" />
           <Button onClick={save} disabled={saving || problems.length > 0}>
             {saving ? "Saving…" : "Save profile"}
           </Button>
@@ -599,7 +605,6 @@ export function ProfileForm({ initial }: { initial: Profile }) {
       </div>
 
       <div className="flex justify-end gap-3 pb-6">
-        {error && <span className="self-center text-xs text-[var(--color-bad)]">{error}</span>}
         <Button onClick={save} disabled={saving}>
           {saving ? "Saving…" : saved ? "Saved" : "Save profile"}
         </Button>

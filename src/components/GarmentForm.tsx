@@ -25,6 +25,7 @@ import type {
   SizeSystem,
 } from "@/lib/types";
 import { Button, Card, Pill, SectionTitle, Swatch } from "./ui";
+import { Status, useStatus } from "./Status";
 import { ImageUploader, canvasFromUrl, extractColors } from "./ImageUploader";
 import type { ImportedProduct } from "@/lib/import/product";
 
@@ -88,7 +89,7 @@ export function GarmentForm({ profile, initial }: { profile: Profile; initial?: 
     Object.keys(initial?.measurements ?? {}).length > 0,
   );
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const status = useStatus();
 
   const unit = profile.unit;
   const def = useMemo(() => subcategoryDef(g.subcategory, g.category), [g.subcategory, g.category]);
@@ -196,7 +197,7 @@ export function GarmentForm({ profile, initial }: { profile: Profile; initial?: 
 
   async function save() {
     setSaving(true);
-    setError(null);
+    status.busy("Saving…");
     try {
       const payload = {
         ...g,
@@ -222,7 +223,7 @@ export function GarmentForm({ profile, initial }: { profile: Profile; initial?: 
       router.push(`/wardrobe/${garment.id}`);
       router.refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Save failed");
+      status.fail(e instanceof Error ? e.message : "Save failed");
     } finally {
       setSaving(false);
     }
@@ -242,7 +243,7 @@ export function GarmentForm({ profile, initial }: { profile: Profile; initial?: 
           </p>
         </div>
         <div className="flex items-center gap-3">
-          {error && <span className="max-w-xs text-xs text-[var(--color-bad)]">{error}</span>}
+          <Status {...status.props} className="max-w-xs" />
           <Button onClick={save} disabled={saving || !g.name.trim()}>
             {saving ? "Saving…" : "Save item"}
           </Button>
@@ -724,13 +725,13 @@ interface ImportResult {
 function ImportBar({ onImport }: { onImport: (r: ImportResult) => void | Promise<void> }) {
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const status = useStatus();
   const [done, setDone] = useState<ImportResult | null>(null);
 
   async function run() {
     if (!url.trim() || busy) return;
     setBusy(true);
-    setError(null);
+    status.busy("Reading that page…");
     setDone(null);
     try {
       const res = await fetch("/api/garments/import", {
@@ -743,7 +744,7 @@ function ImportBar({ onImport }: { onImport: (r: ImportResult) => void | Promise
       setDone(json);
       await onImport(json);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "That link couldn't be read.");
+      status.fail(e instanceof Error ? e.message : "That link couldn't be read.");
     } finally {
       setBusy(false);
     }
@@ -778,7 +779,7 @@ function ImportBar({ onImport }: { onImport: (r: ImportResult) => void | Promise
         </Button>
       </div>
 
-      {error && <p className="mt-2.5 text-xs text-[var(--color-bad)]">{error}</p>}
+      <Status {...status.props} className="mt-2.5" />
 
       {done && (
         <div className="mt-3 rounded-xl border border-[var(--color-line-soft)] bg-[var(--color-raised)] p-3 text-xs leading-relaxed">

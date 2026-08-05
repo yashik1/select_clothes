@@ -22,13 +22,26 @@ export async function POST(req: Request) {
   const parsed = await parseJsonBody(req, schema);
   if (!parsed.ok) return parsed.response;
 
-  // Each signup writes a row and runs a scrypt hash, so an open instance is
-  // otherwise a free way to fill someone's database.
-  const verdict = await consume(`signup:from:${clientKey(req)}`, LIMITS.signup);
-  if (!verdict.ok) return tooMany(verdict.retryAfter, "new accounts from this address");
-
   const email = normaliseEmail(parsed.data.email);
   const { password } = parsed.data;
+
+  /*
+   * Each signup writes a row and runs a scrypt hash, so an open instance is
+   * otherwise a free way to fill someone's database.
+   *
+   * Two keys, because the caller one is only as trustworthy as the proxy in
+   * front: `x-forwarded-for` is a client-supplied header, and a deployment
+   * whose proxy appends to it rather than replacing it hands an attacker a
+   * fresh identity per request and unlimited free signups. Counting per
+   * address as well puts a floor under that. The address key can only ever
+   * delay registering one specific address, which is a far smaller harm than
+   * on sign-in — an attacker who wants an address denied can simply register
+   * it — so a hard refusal is right here.
+   */
+  for (const key of [`signup:from:${clientKey(req)}`, `signup:email:${email}`]) {
+    const verdict = await consume(key, LIMITS.signup);
+    if (!verdict.ok) return tooMany(verdict.retryAfter, "attempts");
+  }
 
   const problem = emailProblem(email) ?? passwordProblem(password);
   if (problem) return NextResponse.json({ error: problem }, { status: 400 });

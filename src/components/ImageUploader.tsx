@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { deltaE2000, labToRgb, rgbToHex, rgbToLab, type Lab } from "@/lib/color/space";
+import { Status, useStatus } from "./Status";
 
 const MAX_EDGE = 1400;
 
@@ -291,7 +292,9 @@ function CameraCapture({
 
         {error && (
           <div className="absolute inset-0 flex items-center justify-center p-8">
-            <p className="max-w-xs text-center text-sm leading-relaxed text-white/80">{error}</p>
+            <p role="alert" className="max-w-xs text-center text-sm leading-relaxed text-white/80">
+              {error}
+            </p>
           </div>
         )}
       </div>
@@ -350,7 +353,7 @@ export function ImageUploader({
   const inputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const status = useStatus();
   const [cameraOpen, setCameraOpen] = useState(false);
   const [liveCamera, setLiveCamera] = useState(false);
 
@@ -416,7 +419,8 @@ export function ImageUploader({
   async function handleFiles(files: FileList | null) {
     if (!files?.length) return;
     setBusy(true);
-    setError(null);
+    const count = Math.min(files.length, max - imageIds.length);
+    status.busy(count === 1 ? "Uploading the photo…" : `Uploading ${count} photos…`);
     const next = [...imageIds];
 
     try {
@@ -428,8 +432,9 @@ export function ImageUploader({
         next.push(await upload(payload, shrunk?.canvas ?? null, next));
       }
       onChange(next);
+      status.say(next.length === 1 ? "Photo added." : `${next.length} photos attached.`);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Upload failed");
+      status.fail(e instanceof Error ? e.message : "Upload failed");
     } finally {
       setBusy(false);
       // Both are cleared: picking the same file twice in a row fires no change
@@ -442,14 +447,15 @@ export function ImageUploader({
   async function handleCapture(canvas: HTMLCanvasElement) {
     setCameraOpen(false);
     setBusy(true);
-    setError(null);
+    status.busy("Uploading the photo…");
     try {
       const next = [...imageIds];
       const blob = await toBlob(canvas);
       next.push(await upload(new File([blob], "photo.jpg", { type: "image/jpeg" }), canvas, next));
       onChange(next);
+      status.say("Photo added.");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Upload failed");
+      status.fail(e instanceof Error ? e.message : "Upload failed");
     } finally {
       setBusy(false);
     }
@@ -531,7 +537,7 @@ export function ImageUploader({
       />
 
       {hint && <p className="mt-2 text-xs text-[var(--color-faint)]">{hint}</p>}
-      {error && <p className="mt-2 text-xs text-[var(--color-bad)]">{error}</p>}
+      <Status {...status.props} className="mt-2" />
 
       {cameraOpen && (
         <CameraCapture onCapture={handleCapture} onClose={() => setCameraOpen(false)} />

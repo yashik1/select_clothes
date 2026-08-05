@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 
 export function AccountMenu({ email }: { email: string }) {
   const [busy, setBusy] = useState(false);
@@ -15,9 +16,18 @@ export function AccountMenu({ email }: { email: string }) {
 
   return (
     <div className="flex items-center gap-2.5">
-      <span className="hidden text-xs text-[var(--color-faint)] sm:inline" title={email}>
+      {/*
+        The address doubles as the way in to the account page. It was already
+        the only place the signed-in identity appeared, and a separate "Account"
+        link beside it would say the same thing twice.
+      */}
+      <Link
+        href="/account"
+        title={`${email} — account settings`}
+        className="hidden max-w-[16ch] truncate rounded-md px-1.5 py-1 text-xs text-[var(--color-faint)] transition-colors hover:bg-[var(--color-raised)] hover:text-[var(--color-text)] sm:inline-block"
+      >
         {email}
-      </span>
+      </Link>
       <button
         onClick={signOut}
         disabled={busy}

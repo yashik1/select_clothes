@@ -295,6 +295,35 @@ async function one<T extends Row = Row>(text: string, params: unknown[] = []): P
 export const nowIso = () => new Date().toISOString();
 export const newId = () => globalThis.crypto.randomUUID();
 
+/* ------------------------------------------------------------- ceilings -- */
+
+/**
+ * What one account is allowed to occupy.
+ *
+ * Every one of these is far above what a person with a wardrobe will ever
+ * reach — the largest wardrobe anyone has actually catalogued in this app is
+ * two orders of magnitude below the garment cap. They exist for the other
+ * case: a script with a valid session, looping. Without them a single account
+ * can fill the disk the whole instance shares, and the failure lands on
+ * everybody else.
+ */
+export const QUOTA = {
+  garments: 2_000,
+  outfits: 2_000,
+  /** Bytes of stored photos. Roughly 250 full-resolution phone photos. */
+  imageBytes: 256 * 1024 * 1024,
+} as const;
+
+/**
+ * The ceiling on any single SELECT, independent of the quotas above.
+ *
+ * A quota bounds what an account can create from here on; it says nothing
+ * about a table that is already large, and `SELECT *` with no LIMIT reads the
+ * whole result into memory before the caller sees a row. This is the backstop
+ * that keeps one enormous account from taking the process down with it.
+ */
+const MAX_ROWS = 5_000;
+
 /* ----------------------------------------------------------- accounts -- */
 
 export interface AccountRow {
@@ -423,6 +452,22 @@ export async function refundRateLimit(key: string): Promise<void> {
   await q("UPDATE rate_limit SET count = greatest(0, count - 1) WHERE key = $1", [key]);
 }
 
+/**
+ * Drops counters whose window closed long ago.
+ *
+ * Without this the table only ever grows, and it grows on unauthenticated
+ * input: every distinct email address and every distinct `x-forwarded-for`
+ * value mints a permanent row, so anyone can add one row per request forever.
+ * That is a slower version of the attack the limiter exists to stop.
+ *
+ * The hour of grace is not correctness — an expired row is reset by the next
+ * bump regardless — it just stops the common keys being deleted and reinserted
+ * all day.
+ */
+export async function purgeExpiredRateLimits(): Promise<void> {
+  await q("DELETE FROM rate_limit WHERE reset_at < now() - interval '1 hour'");
+}
+
 /* ------------------------------------------------------- password reset -- */
 
 /**
@@ -449,15 +494,31 @@ export async function createPasswordReset(
  * two requests arriving together would both see an unused token and both be
  * allowed to set a password. The `used_at IS NULL` in the WHERE clause means
  * exactly one of them updates a row.
+ *
+ * Claiming one token spends every other live token for the same account, in
+ * the same statement. Asking for a second link because the first didn't arrive
+ * is the ordinary case, and leaving the first one working for another
+ * three-quarters of an hour means an old message — sitting in an inbox, in a
+ * mail provider's logs, or in a forwarded thread — can still take the account
+ * over after its owner believes they have secured it.
  */
 export async function claimPasswordReset(tokenHash: string): Promise<string | null> {
   const rows = await q(
-    `UPDATE password_reset
-        SET used_at = $2
-      WHERE token_hash = $1
-        AND used_at IS NULL
-        AND expires_at > $2
-      RETURNING user_id`,
+    `WITH claimed AS (
+       UPDATE password_reset
+          SET used_at = $2
+        WHERE token_hash = $1
+          AND used_at IS NULL
+          AND expires_at > $2
+        RETURNING user_id
+     ), siblings AS (
+       UPDATE password_reset
+          SET used_at = $2
+        WHERE user_id IN (SELECT user_id FROM claimed)
+          AND token_hash <> $1
+          AND used_at IS NULL
+     )
+     SELECT user_id FROM claimed`,
     [tokenHash, nowIso()],
   );
   return rows.length ? (rows[0].user_id as string) : null;
@@ -524,9 +585,7 @@ export async function purgeExpiredSessions(): Promise<void> {
 
 /* --------------------------------------------------------------- profile -- */
 
-export async function getProfile(userId: string): Promise<Profile | null> {
-  const row = await one("SELECT * FROM profile WHERE user_id = $1", [userId]);
-  if (!row) return null;
+function rowToProfile(row: Row): Profile {
   return {
     id: row.id as string,
     name: row.name as string,
@@ -535,6 +594,11 @@ export async function getProfile(userId: string): Promise<Profile | null> {
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
   } as Profile;
+}
+
+export async function getProfile(userId: string): Promise<Profile | null> {
+  const row = await one("SELECT * FROM profile WHERE user_id = $1", [userId]);
+  return row ? rowToProfile(row) : null;
 }
 
 export function emptyProfile(id: string): Profile {
@@ -597,8 +661,10 @@ export async function listGarments(
 ): Promise<Garment[]> {
   const rows = await q(
     opts.includeArchived
-      ? "SELECT * FROM garment WHERE user_id = $1 ORDER BY created_at DESC"
-      : "SELECT * FROM garment WHERE user_id = $1 AND archived_at IS NULL ORDER BY created_at DESC",
+      ? `SELECT * FROM garment WHERE user_id = $1
+           ORDER BY created_at DESC LIMIT ${MAX_ROWS}`
+      : `SELECT * FROM garment WHERE user_id = $1 AND archived_at IS NULL
+           ORDER BY created_at DESC LIMIT ${MAX_ROWS}`,
     [userId],
   );
   return rows.map(rowToGarment);
@@ -612,7 +678,7 @@ export async function getGarment(userId: string, id: string): Promise<Garment | 
 export async function getGarments(userId: string, ids: string[]): Promise<Garment[]> {
   if (!ids.length) return [];
   const rows = await q(
-    "SELECT * FROM garment WHERE user_id = $1 AND id = ANY($2::text[])",
+    `SELECT * FROM garment WHERE user_id = $1 AND id = ANY($2::text[]) LIMIT ${MAX_ROWS}`,
     [userId, ids],
   );
   const byId = new Map(rows.map((r) => [r.id as string, rowToGarment(r)]));
@@ -699,7 +765,8 @@ function rowToOutfit(row: Row): Outfit {
 
 export async function listOutfits(userId: string): Promise<Outfit[]> {
   const rows = await q(
-    "SELECT * FROM outfit WHERE user_id = $1 ORDER BY pinned DESC, updated_at DESC",
+    `SELECT * FROM outfit WHERE user_id = $1
+       ORDER BY pinned DESC, updated_at DESC LIMIT ${MAX_ROWS}`,
     [userId],
   );
   return rows.map(rowToOutfit);
@@ -734,20 +801,25 @@ export async function deleteOutfit(userId: string, id: string): Promise<void> {
 
 /* -------------------------------------------------------------- wear log -- */
 
-export async function listWearLogs(userId: string, sinceDays = 120): Promise<WearLog[]> {
-  const cutoff = new Date(Date.now() - sinceDays * 86400000).toISOString();
-  const rows = await q(
-    "SELECT * FROM wear_log WHERE user_id = $1 AND date >= $2 ORDER BY date DESC",
-    [userId, cutoff],
-  );
-  return rows.map((row) => ({
+function rowToWearLog(row: Row): WearLog {
+  return {
     id: row.id as string,
     date: row.date as string,
     outfitId: (row.outfit_id as string) ?? null,
     occasion: (row.occasion as WearLog["occasion"]) ?? undefined,
     ...(row.data as object),
     createdAt: row.created_at as string,
-  })) as WearLog[];
+  } as WearLog;
+}
+
+export async function listWearLogs(userId: string, sinceDays = 120): Promise<WearLog[]> {
+  const cutoff = new Date(Date.now() - sinceDays * 86400000).toISOString();
+  const rows = await q(
+    `SELECT * FROM wear_log WHERE user_id = $1 AND date >= $2
+       ORDER BY date DESC LIMIT ${MAX_ROWS}`,
+    [userId, cutoff],
+  );
+  return rows.map(rowToWearLog);
 }
 
 /**
@@ -865,6 +937,31 @@ export async function getImageRecord(userId: string, id: string): Promise<ImageR
   };
 }
 
+/**
+ * How much of the photo budget an account has spent.
+ *
+ * `octet_length` on a bytea is the stored length, so this is the real cost
+ * rather than a running total kept alongside it — a counter would drift the
+ * first time a delete failed halfway.
+ */
+export async function imageBytesUsed(userId: string): Promise<number> {
+  const r = await one(
+    "SELECT coalesce(sum(octet_length(bytes)), 0)::bigint AS used FROM image WHERE user_id = $1",
+    [userId],
+  );
+  // bigint arrives as a string from pg, since it can exceed Number precision.
+  return Number(r?.used ?? 0);
+}
+
+/** Rows an account owns, for the two caps that are counted rather than sized. */
+export async function countOwned(
+  userId: string,
+  table: "garment" | "outfit",
+): Promise<number> {
+  const r = await one(`SELECT count(*)::int AS n FROM ${table} WHERE user_id = $1`, [userId]);
+  return (r?.n as number) ?? 0;
+}
+
 /** Metadata and bytes together, for serving and for inlining into try-on calls. */
 export async function getImage(
   userId: string,
@@ -873,4 +970,106 @@ export async function getImage(
   const r = await one("SELECT mime, bytes FROM image WHERE id = $1 AND user_id = $2", [id, userId]);
   if (!r) return null;
   return { mime: r.mime as string, bytes: r.bytes as Buffer };
+}
+
+/* --------------------------------------------------------- the whole lot -- */
+
+/**
+ * Every table this account owns, in one object.
+ *
+ * Deliberately not built from the list functions above: those carry defaults
+ * that are right for a screen and wrong for an export — `listWearLogs` shows
+ * the last 120 days, `listGarments` hides archived items. An export that
+ * quietly drops four fifths of someone's history is worse than no export,
+ * because they will believe they have a copy.
+ *
+ * Photo bytes are not inlined. Base64 of a full image budget is a third of a
+ * gigabyte of JSON, which no browser will hold and no editor will open, so
+ * each photo is listed with its size and the URL that serves it.
+ */
+export async function exportAccount(userId: string) {
+  const account = await getUserById(userId);
+  if (!account) return null;
+
+  const [profileRows, garments, outfits, wearLogs, feedback, calibrations, images] =
+    await Promise.all([
+      q("SELECT * FROM profile WHERE user_id = $1", [userId]),
+      q("SELECT * FROM garment  WHERE user_id = $1 ORDER BY created_at", [userId]),
+      q("SELECT * FROM outfit   WHERE user_id = $1 ORDER BY created_at", [userId]),
+      q("SELECT * FROM wear_log WHERE user_id = $1 ORDER BY date", [userId]),
+      q("SELECT * FROM fit_feedback WHERE user_id = $1 ORDER BY created_at", [userId]),
+      q("SELECT * FROM brand_calibration WHERE user_id = $1 ORDER BY brand", [userId]),
+      q(
+        `SELECT id, mime, kind, created_at, octet_length(bytes) AS size_bytes
+           FROM image WHERE user_id = $1 ORDER BY created_at`,
+        [userId],
+      ),
+    ]);
+
+  return {
+    exportedAt: nowIso(),
+    account: { id: account.id, email: account.email, createdAt: account.createdAt },
+    profile: profileRows[0] ? rowToProfile(profileRows[0]) : null,
+    garments: garments.map(rowToGarment),
+    outfits: outfits.map(rowToOutfit),
+    wearLogs: wearLogs.map(rowToWearLog),
+    fitFeedback: feedback.map((r) => ({
+      id: r.id as string,
+      garmentId: r.garment_id as string,
+      landmark: r.landmark as string,
+      verdict: r.verdict as string,
+      createdAt: r.created_at as string,
+    })),
+    brandCalibrations: calibrations.map((r) => ({
+      brand: r.brand as string,
+      category: r.category as string,
+      easeBiasCm: r.ease_bias_cm as number,
+      sampleCount: r.sample_count as number,
+      updatedAt: r.updated_at as string,
+    })),
+    photos: images.map((r) => ({
+      id: r.id as string,
+      mime: r.mime as string,
+      kind: r.kind as string,
+      sizeBytes: Number(r.size_bytes ?? 0),
+      url: `/api/images/${r.id as string}`,
+      createdAt: r.created_at as string,
+    })),
+  };
+}
+
+/**
+ * Removes an account and everything it owns.
+ *
+ * `user_id` on the data tables is a bare TEXT column with no foreign key —
+ * it has to be, because rows predating accounts carry NULL and a NOT VALID
+ * constraint would have blocked the migration. So `DELETE FROM app_user`
+ * cascades to sessions and reset tokens and *nothing else*: the wardrobe,
+ * the photos and the wear history would all survive, pointing at a user that
+ * no longer exists, invisible to every query and impossible to remove through
+ * the app. Each table is therefore named explicitly here.
+ *
+ * One transaction, so a failure halfway leaves the account intact and
+ * retryable rather than half-erased.
+ */
+export async function deleteAccount(userId: string): Promise<boolean> {
+  await ready();
+  const client = await pool().connect();
+  try {
+    await client.query("BEGIN");
+    for (const table of [
+      "image", "fit_feedback", "brand_calibration", "wear_log", "outfit", "garment", "profile",
+    ]) {
+      await client.query(`DELETE FROM ${table} WHERE user_id = $1`, [userId]);
+    }
+    // Sessions and reset tokens go with this one, by cascade.
+    const res = await client.query("DELETE FROM app_user WHERE id = $1", [userId]);
+    await client.query("COMMIT");
+    return (res.rowCount ?? 0) > 0;
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
 }

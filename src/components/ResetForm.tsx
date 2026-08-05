@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Button, Card } from "@/components/ui";
+import { FocusHeading, Status, useStatus } from "@/components/Status";
 
 /* ------------------------------------------------------------- request -- */
 
@@ -10,12 +11,12 @@ export function ForgotForm() {
   const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState<{ delivery: "email" | "log" } | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const status = useStatus();
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
-    setError(null);
+    status.busy("One moment…");
     try {
       const res = await fetch("/api/auth/forgot", {
         method: "POST",
@@ -26,7 +27,7 @@ export function ForgotForm() {
       if (!res.ok) throw new Error(payload.error ?? "Something went wrong. Try again.");
       setSent({ delivery: payload.delivery === "email" ? "email" : "log" });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong.");
+      status.fail(err instanceof Error ? err.message : "Something went wrong.");
     } finally {
       setBusy(false);
     }
@@ -39,11 +40,17 @@ export function ForgotForm() {
       {sent ? (
         <Card className="mt-6 p-5">
           {/*
+            The form this replaced held focus. Without somewhere to put it,
+            focus falls to the top of the document and the person who just
+            pressed the button is told nothing at all.
+          */}
+          <FocusHeading className="text-lg font-medium">Check your email</FocusHeading>
+          {/*
             Worded so it is true either way, and never says whether the address
             is registered — the sign-in form goes to some trouble not to, and
             "we couldn't find that account" here would give it away.
           */}
-          <p className="text-[0.9375rem]">
+          <p className="mt-2 text-[0.9375rem]">
             If there&apos;s an account for <strong className="font-medium">{email}</strong>, a link
             to set a new password is on its way. It works once and expires in 45 minutes.
           </p>
@@ -81,11 +88,7 @@ export function ForgotForm() {
                 />
               </div>
 
-              {error && (
-                <p role="alert" className="text-xs text-[var(--color-bad)]">
-                  {error}
-                </p>
-              )}
+              <Status {...status.props} />
 
               <Button type="submit" disabled={busy || !email.trim()} className="w-full">
                 {busy ? "One moment…" : "Send the link"}
@@ -106,16 +109,49 @@ export function ForgotForm() {
 
 /* -------------------------------------------------------------- finish -- */
 
-export function ResetForm({ token }: { token: string }) {
+/**
+ * Pulls the token out of `#token=…` and takes it out of the address bar.
+ *
+ * Null while it has not been read yet, which on the very first render is
+ * always — the server has no fragment to render from, so anything derived from
+ * it has to happen in an effect or the two renders disagree.
+ */
+function useTokenFromFragment(): { token: string | null; read: boolean } {
+  const [state, setState] = useState<{ token: string | null; read: boolean }>({
+    token: null,
+    read: false,
+  });
+
+  useEffect(() => {
+    const raw = window.location.hash.replace(/^#/, "");
+    const token = new URLSearchParams(raw).get("token");
+    setState({ token, read: true });
+
+    if (token) {
+      /*
+       * Out of the address bar, so it does not end up in browser history, in a
+       * screenshot, or in the URL the next person to borrow this laptop finds
+       * in the autocomplete list. The token is in state by now; the page does
+       * not need the fragment again.
+       */
+      window.history.replaceState(null, "", window.location.pathname);
+    }
+  }, []);
+
+  return state;
+}
+
+export function ResetForm() {
+  const { token, read } = useTokenFromFragment();
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const status = useStatus();
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
-    setError(null);
+    status.busy("One moment…");
     try {
       const res = await fetch("/api/auth/reset", {
         method: "POST",
@@ -126,15 +162,38 @@ export function ResetForm({ token }: { token: string }) {
       if (!res.ok) throw new Error(payload.error ?? "Something went wrong. Try again.");
       setDone(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong.");
+      status.fail(err instanceof Error ? err.message : "Something went wrong.");
       setBusy(false);
     }
+  }
+
+  // Nothing at all until the fragment has been read, rather than a flash of
+  // "that link is incomplete" at everyone who followed a perfectly good link.
+  if (!read) return <div className="mx-auto max-w-md py-10" aria-busy="true" />;
+
+  if (!token) {
+    return (
+      <div className="mx-auto max-w-md py-10">
+        <FocusHeading className="display text-4xl">That link is incomplete</FocusHeading>
+        <Card className="mt-6 p-5 text-[0.9375rem]">
+          <p>
+            The address is missing its token, which usually means a mail client broke the link
+            across two lines. Copy the whole thing, or ask for a new one.
+          </p>
+          <p className="mt-4">
+            <Link href="/forgot" className="underline underline-offset-4">
+              Send a new link
+            </Link>
+          </p>
+        </Card>
+      </div>
+    );
   }
 
   if (done) {
     return (
       <div className="mx-auto max-w-md py-10">
-        <h1 className="display text-4xl">Password changed</h1>
+        <FocusHeading className="display text-4xl">Password changed</FocusHeading>
         <Card className="mt-6 p-5">
           <p className="text-[0.9375rem]">
             Every device that was signed in has been signed out, including this one. Sign in again
@@ -173,11 +232,7 @@ export function ResetForm({ token }: { token: string }) {
             </p>
           </div>
 
-          {error && (
-            <p role="alert" className="text-xs text-[var(--color-bad)]">
-              {error}
-            </p>
-          )}
+          <Status {...status.props} />
 
           <Button type="submit" disabled={busy || !password} className="w-full">
             {busy ? "One moment…" : "Set the password"}

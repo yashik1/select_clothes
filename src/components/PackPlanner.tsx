@@ -4,6 +4,7 @@ import { useState } from "react";
 import { OCCASIONS, OCCASION_KEYS } from "@/lib/engine/formality";
 import type { OccasionKey } from "@/lib/types";
 import { Button, Card, Pill, SectionTitle } from "./ui";
+import { ScreenReaderStatus, Status, useStatus } from "./Status";
 
 interface PackResponse {
   items: { id: string; name: string; category: string; subcategory: string; imageIds: string[]; colors: { hex: string }[] }[];
@@ -25,7 +26,7 @@ export function PackPlanner() {
 
   const [result, setResult] = useState<PackResponse | null>(null);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const status = useStatus();
 
   function setDayCount(n: number) {
     const clamped = Math.max(1, Math.min(21, n));
@@ -39,7 +40,7 @@ export function PackPlanner() {
 
   async function plan() {
     setBusy(true);
-    setError(null);
+    status.busy("Working out the smallest bag that covers every day…");
     try {
       const res = await fetch("/api/pack", {
         method: "POST",
@@ -47,9 +48,11 @@ export function PackPlanner() {
         body: JSON.stringify({ days, itinerary, tempLowC, tempHighC, rain, maxItems }),
       });
       if (!res.ok) throw new Error("Could not plan this trip.");
-      setResult(await res.json());
+      const plan: PackResponse = await res.json();
+      setResult(plan);
+      status.say(`Packed ${plan.items.length} items for ${days} days.`);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Something went wrong.");
+      status.fail(e instanceof Error ? e.message : "Something went wrong.");
     } finally {
       setBusy(false);
     }
@@ -132,7 +135,7 @@ export function PackPlanner() {
           <Button onClick={plan} disabled={busy}>
             {busy ? "Working it out…" : "Plan the suitcase"}
           </Button>
-          {error && <span className="text-xs text-[var(--color-bad)]">{error}</span>}
+          <Status {...status.props} />
         </div>
       </Card>
 

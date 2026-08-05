@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { createPasswordReset, getUserByEmail, purgeExpiredResets } from "@/lib/db";
+import {
+  createPasswordReset, getUserByEmail, purgeExpiredRateLimits, purgeExpiredResets,
+} from "@/lib/db";
 import { hashToken, newSessionToken, normaliseEmail } from "@/lib/auth";
 import { parseJsonBody } from "@/lib/http";
 import { canEmailStrangers, publicOrigin, sendMail } from "@/lib/server/email";
@@ -25,12 +27,13 @@ export async function POST(req: Request) {
 
   const email = normaliseEmail(parsed.data.email);
 
-  // Per address and per caller: one stops an inbox being flooded, the other
-  // stops the endpoint being used to send mail on somebody else's behalf.
-  for (const key of [`reset:email:${email}`, `reset:from:${clientKey(req)}`]) {
-    const verdict = await consume(key, LIMITS.passwordReset);
-    if (!verdict.ok) return tooMany(verdict.retryAfter, "reset requests");
-  }
+  const from = clientKey(req);
+
+  // Keyed on the caller, so exhausting it costs the caller. A hard refusal is
+  // fine here for the same reason it is fine on login: nobody else's ability
+  // to use the endpoint depends on this counter.
+  const byCaller = await consume(`reset:from:${from}`, LIMITS.passwordReset);
+  if (!byCaller.ok) return tooMany(byCaller.retryAfter, "reset requests");
 
   const sameAnswer = NextResponse.json({
     ok: true,
@@ -51,20 +54,45 @@ export async function POST(req: Request) {
     return sameAnswer;
   }
 
+  /*
+   * How many messages this address may receive, regardless of who asked.
+   *
+   * Unlike the login route, a spent budget here is *not* an error: returning a
+   * 429 would answer differently for a registered address than an unregistered
+   * one, which is precisely the disclosure the identical `sameAnswer` exists to
+   * prevent. So a flooded inbox simply stops receiving mail, silently, and the
+   * caller cannot tell that from a successful send.
+   *
+   * The window is fifteen minutes rather than an hour because this counter can
+   * be filled by someone else. Nobody should be locked out of recovering their
+   * own account for longer than that.
+   */
+  const inbox = await consume(`reset:inbox:${email}`, LIMITS.resetInbox);
+  if (!inbox.ok) return sameAnswer;
+
   const { token } = newSessionToken();
   const expiresAt = new Date(Date.now() + VALID_MINUTES * 60_000).toISOString();
   await createPasswordReset(hashToken(token), user.id, expiresAt);
 
-  await sendMail({
+  /*
+   * Not awaited, and that is a security property rather than a speed one.
+   * Awaiting an outbound HTTPS call to the mail provider makes a registered
+   * address take a few hundred milliseconds longer to answer than an
+   * unregistered one, and a stopwatch then reads out the membership list that
+   * every identical response above was written to protect.
+   */
+  const link = `${origin}/reset#token=${token}`;
+  void sendMail({
     to: user.email,
     subject: "Reset your FitCheck password",
     text:
       `Someone asked to reset the password for this address.\n\n` +
-      `${origin}/reset?token=${token}\n\n` +
+      `${link}\n\n` +
       `The link works once and expires in ${VALID_MINUTES} minutes. ` +
       `If it wasn't you, nothing has changed and you can ignore this.\n`,
-  });
+  }).catch((err) => console.error("[reset] could not send the email:", err));
 
   purgeExpiredResets().catch(() => {});
+  purgeExpiredRateLimits().catch(() => {});
   return sameAnswer;
 }

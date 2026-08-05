@@ -21,6 +21,7 @@ import {
   SectionTitle,
   VerdictBadge,
 } from "./ui";
+import { ScreenReaderStatus } from "./Status";
 
 const ORDER: GarmentCategory[] = ["top", "bottom", "dress", "outerwear", "shoes", "accessory", "bag"];
 
@@ -351,6 +352,27 @@ export function Studio({
 
         {/* ---------------------------------------------------- verdict -- */}
         <aside className="space-y-4 lg:sticky lg:top-20 lg:self-start">
+          {/*
+            The score is the whole point of this screen, and it arrives without
+            anyone pressing anything — toggling a garment re-scores after a
+            220ms pause. Sighted users watch the ring move. Everyone else got
+            nothing: no focus change, no event, just a number quietly replaced
+            in a corner of the page.
+
+            Invisible rather than shown, because the verdict is already on
+            screen in a far richer form; repeating it visibly would be clutter,
+            while saying it once is the entire fix.
+          */}
+          <ScreenReaderStatus
+            message={
+              scoring
+                ? "Scoring…"
+                : result
+                  ? `${result.score.verdict === "wear-it" ? "Wear it" : result.score.verdict === "close" ? "One tweak away" : "Skip it"}. ` +
+                    `${Math.round(result.score.total)} out of 100. ${result.score.headline}`
+                  : ""
+            }
+          />
           {!result ? (
             <Card className="p-6 text-sm text-[var(--color-muted)]">
               {scoring ? "Scoring…" : "The verdict appears here as soon as you pick something."}
