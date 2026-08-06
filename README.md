@@ -122,6 +122,24 @@ too, which is the only way the figure can show what is worn under what.
 It is the same renderer as the You page, drawing into the same 2D canvas — no
 WebGL, no model, nothing fetched.
 
+**A photo of yourself, next to it, answering a different question.** The
+figure says whether a garment fits — that's arithmetic, and it needs nothing
+from you but measurements. Beside it, on the same garment page, is a photo:
+take one with the camera or choose a file, and it puts the garment's own photo
+onto yours through whichever render provider is configured. It's optional
+everywhere the figure isn't — no photo, no key, no render, the figure and the
+fit report work exactly as before.
+
+The photo is taken once and reused for every garment, so the second render
+onward is just picking a different item. Every render is cached — the pairing
+of your photo and that garment's photo is the cache key — so returning to a
+page you've already rendered costs nothing and shows the same picture instantly;
+a "render it again" link is there for when you want a fresh one. Replacing your
+photo throws out every cached render along with the old one, since they're all
+pictures of a person you've just said isn't current. Nothing is sent anywhere
+until you press the button that renders it, and the panel says in advance
+where it's going and roughly what it costs.
+
 ---
 
 ## Starting from a product link
@@ -417,7 +435,7 @@ tests/                     261 tests; some need a database, some a running serve
 ```bash
 npm run dev        # dev server
 npm test           # 236 with a database, 222 without (the rest skip cleanly)
-                   # 27 more run over HTTP in CI, against a booted server
+                   # 28 more run over HTTP in CI, against a booted server
 npm run typecheck  # tsc --noEmit
 npm run build      # production build
 npm run seed       # reset to the demo wardrobe (--force if not empty)

@@ -46,6 +46,15 @@ async function downscale(file: File): Promise<{ blob: Blob; canvas: HTMLCanvasEl
   }
 }
 
+/*
+ * The two steps above, for anything else that has to turn a picture into an
+ * upload. Shared rather than reimplemented so every photo this app stores has
+ * been through the same downscale, the same EXIF handling and the same quality
+ * setting, whichever screen it was taken on.
+ */
+export const canvasToJpeg = (canvas: HTMLCanvasElement) => toBlob(canvas);
+export const shrinkFile = (file: File) => downscale(file);
+
 /** Reads a stored image back, so colours can be pulled from what the server
  *  converted when the browser couldn't read the original. */
 export function canvasFromUrl(url: string): Promise<HTMLCanvasElement> {
@@ -189,17 +198,28 @@ function cameraProblem(err: unknown): string {
  * A full-screen viewfinder. Full-screen because framing a whole garment on a
  * phone through a thumbnail-sized preview is miserable, and this is the moment
  * the photo is either square-on and evenly lit or it isn't.
+ *
+ * `facing` starts wherever the caller points it: the back camera for a garment
+ * laid out on a bed, the front one for a photo of yourself, where opening onto
+ * the wrong lens means every single person has to find the flip button first.
  */
-function CameraCapture({
+export function CameraCapture({
   onCapture,
   onClose,
+  initialFacing = "environment",
+  label = "Take a photo",
+  guide,
 }: {
   onCapture: (canvas: HTMLCanvasElement) => void;
   onClose: () => void;
+  initialFacing?: "environment" | "user";
+  label?: string;
+  /** One line over the viewfinder, for framing that actually matters. */
+  guide?: string;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const [facing, setFacing] = useState<"environment" | "user">("environment");
+  const [facing, setFacing] = useState<"environment" | "user">(initialFacing);
   const [error, setError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const [manyCameras, setManyCameras] = useState(false);
@@ -268,7 +288,7 @@ function CameraCapture({
     <div
       role="dialog"
       aria-modal="true"
-      aria-label="Take a photo"
+      aria-label={label}
       className="fixed inset-0 z-50 flex flex-col bg-black"
     >
       <div className="relative flex-1 overflow-hidden">
@@ -287,6 +307,12 @@ function CameraCapture({
         {!ready && !error && (
           <p className="absolute inset-0 flex items-center justify-center text-sm text-white/70">
             Starting the camera…
+          </p>
+        )}
+
+        {guide && ready && !error && (
+          <p className="absolute inset-x-0 bottom-4 px-8 text-center text-sm leading-relaxed text-white/80">
+            {guide}
           </p>
         )}
 

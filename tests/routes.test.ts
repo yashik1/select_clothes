@@ -63,6 +63,7 @@ describe("the auth boundary", options, () => {
     ["POST", "/api/garments"],
     ["GET", "/api/profile"],
     ["PUT", "/api/profile"],
+    ["PUT", "/api/profile/photo"],
     ["POST", "/api/images"],
     ["POST", "/api/score"],
     ["POST", "/api/pack"],

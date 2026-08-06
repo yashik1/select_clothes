@@ -1022,6 +1022,47 @@ export async function countOwned(
   return (r?.n as number) ?? 0;
 }
 
+/**
+ * The most recent image an account holds under one exact `kind`.
+ *
+ * `kind` is otherwise a loose label ("garment", "body"). Try-on renders use it
+ * as a cache key instead — `tryon:<photoId>:<garmentId>` — because that pair
+ * is what determines the picture. A render costs real money and twenty seconds
+ * of waiting, and revisiting a page should cost neither.
+ */
+export async function findImageByKind(userId: string, kind: string): Promise<string | null> {
+  const r = await one(
+    "SELECT id FROM image WHERE user_id = $1 AND kind = $2 ORDER BY created_at DESC LIMIT 1",
+    [userId, kind],
+  );
+  return r ? (r.id as string) : null;
+}
+
+/**
+ * Clears every image whose kind starts with `prefix`, and says how many went.
+ *
+ * Used when the body photo changes: every cached render was of the old body,
+ * so they are all wrong at once, and leaving them would spend the account's
+ * photo budget on pictures nothing will ever show again.
+ */
+export async function deleteImagesByKindPrefix(userId: string, prefix: string): Promise<number> {
+  const rows = await q("DELETE FROM image WHERE user_id = $1 AND kind LIKE $2 RETURNING id", [
+    userId,
+    `${prefix}%`,
+  ]);
+  return rows.length;
+}
+
+/** Removes specific images, and only ones this account owns. */
+export async function deleteImages(userId: string, ids: string[]): Promise<number> {
+  if (!ids.length) return 0;
+  const rows = await q(
+    "DELETE FROM image WHERE user_id = $1 AND id = ANY($2::text[]) RETURNING id",
+    [userId, ids],
+  );
+  return rows.length;
+}
+
 /** Metadata and bytes together, for serving and for inlining into try-on calls. */
 export async function getImage(
   userId: string,

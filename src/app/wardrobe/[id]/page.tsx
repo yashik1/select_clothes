@@ -16,6 +16,7 @@ import { OutfitCard } from "@/components/OutfitCard";
 import { GarmentActions } from "@/components/GarmentActions";
 import { Card, ConfidenceBar, GarmentThumb, Pill, SectionTitle, Swatch } from "@/components/ui";
 import { BodyAvatar } from "@/components/BodyAvatar";
+import { TryOnPhoto } from "@/components/TryOnPhoto";
 
 export const dynamic = "force-dynamic";
 
@@ -219,11 +220,23 @@ export default async function GarmentPage({ params }: { params: Promise<{ id: st
 
       {/* ------------------------------------------------------- on you -- */}
       <div>
-        <SectionTitle hint="The same figure as your measurements, wearing this. Every number in the table above is a distance you can see here.">
+        <SectionTitle hint="Two different questions. The figure is built from your measurements and answers whether it fits; the photo shows what it looks like on you, and knows nothing about your chest.">
           On you
         </SectionTitle>
-        <div className="max-w-md">
-          <BodyAvatar measurements={profile.measurements} unit={profile.unit} garments={[garment]} />
+        <div className="grid gap-4 lg:grid-cols-2">
+          <div>
+            <BodyAvatar
+              measurements={profile.measurements}
+              unit={profile.unit}
+              garments={[garment]}
+            />
+          </div>
+          <TryOnPhoto
+            garmentId={garment.id}
+            garmentName={garment.name}
+            hasGarmentPhoto={garment.imageIds.length > 0}
+            initialPhotoId={profile.bodyPhotoIds?.[0] ?? null}
+          />
         </div>
       </div>
 

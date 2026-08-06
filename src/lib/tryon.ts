@@ -117,10 +117,12 @@ export function providerStatus(): ProviderStatus {
         label: "Flat-lay preview (no external service)",
         configured: true,
         source,
+        // Layout-neutral: this line is shown beside the figure on the garment
+        // page and above it in the studio, so it cannot point anywhere.
         hint:
           source === "explicit"
             ? "Photo rendering is switched off — FITCHECK_TRYON_PROVIDER is set to none."
-            : "Add FAL_KEY (or FASHN_API_KEY) to render on your own photo. The figure below needs no key at all.",
+            : "Set FAL_KEY (or FASHN_API_KEY) on the server to render on your own photo.",
       };
   }
 }
