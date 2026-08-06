@@ -232,9 +232,9 @@ export default async function GarmentPage({ params }: { params: Promise<{ id: st
             />
           </div>
           <TryOnPhoto
-            garmentId={garment.id}
-            garmentName={garment.name}
-            hasGarmentPhoto={garment.imageIds.length > 0}
+            garmentIds={[garment.id]}
+            label={garment.name}
+            hasAnyPhoto={garment.imageIds.length > 0}
             initialPhotoId={profile.bodyPhotoIds?.[0] ?? null}
           />
         </div>

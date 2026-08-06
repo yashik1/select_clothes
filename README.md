@@ -119,16 +119,24 @@ oversized coat sweeps and a second-skin tee barely stirs — the motion is the
 measurement, not decoration laid over it. Clothes arrive one layer at a time
 too, which is the only way the figure can show what is worn under what.
 
+That swing turns each ring about its own centre, not the body's. A coat's hem
+is one loop that already runs close to the spine, so those two axes are nearly
+the same thing — a trouser leg or a sleeve is a narrow tube sitting well off to
+one side, and turning it about the *body's* axis instead swings a whole limb's
+worth of cloth sideways in an arc rather than in place, which read as the
+garment visibly leaving the leg it was on while the figure was being dragged.
+
 It is the same renderer as the You page, drawing into the same 2D canvas — no
 WebGL, no model, nothing fetched.
 
 **A photo of yourself, next to it, answering a different question.** The
 figure says whether a garment fits — that's arithmetic, and it needs nothing
-from you but measurements. Beside it, on the same garment page, is a photo:
-take one with the camera or choose a file, and it puts the garment's own photo
-onto yours through whichever render provider is configured. It's optional
-everywhere the figure isn't — no photo, no key, no render, the figure and the
-fit report work exactly as before.
+from you but measurements. Beside it, on a single garment's own page and in
+the studio while a whole outfit is assembled, is a photo: take one with the
+camera or choose a file, and it puts the garment's own photo — or every
+renderable piece of the outfit — onto yours through whichever render provider
+is configured. It's optional everywhere the figure isn't — no photo, no key,
+no render, the figure and the fit report work exactly as before.
 
 The photo is taken once and reused for every garment, so the second render
 onward is just picking a different item. Every render is cached — the pairing

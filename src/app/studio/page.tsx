@@ -23,6 +23,7 @@ export default async function StudioPage() {
         // environment and carries no secret — only which provider is on and
         // what is missing if it isn't.
         provider={providerStatus()}
+        bodyPhotoId={profile.bodyPhotoIds?.[0] ?? null}
       />
     </Suspense>
   );

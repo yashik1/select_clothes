@@ -282,6 +282,22 @@ export function layerAlpha(
  * drape — the ease the fit report scores — so a coat standing 12cm off the
  * chest sweeps and a tee at 2cm barely stirs.
  *
+ * Each ring twists about its own centre rather than the body's. A coat's hem
+ * is one loop that already runs close to the spine, so those two axes are
+ * nearly the same thing, which is why this looked right for coats and dresses.
+ * A trouser leg or a sleeve is a narrow tube sitting well off to one side, and
+ * this used to rotate it about the *body's* axis regardless — which swings a
+ * whole limb's worth of cloth sideways in an arc rather than twisting it in
+ * place, and the further out the tube sits, the more of an arc it is. Measured
+ * on a pair of relaxed-fit trousers at the largest lag the spring reaches: the
+ * two ankles drifted 2.7cm apart in opposite directions — a third of the
+ * ankle's own width — while the leg underneath, which nothing swings, stayed
+ * exactly put. That is the garment visibly leaving the body while the figure
+ * is dragged, and it is gone once each ring supplies its own pivot: a torso
+ * ring's own centre already sits close to the spine, so a coat keeps sweeping
+ * exactly as before, while a limb far off that axis now turns about the line
+ * actually running through it.
+ *
  * Returns the original vertices untouched when there is nothing to apply,
  * which is the common case: the figure is usually standing still.
  */
@@ -292,14 +308,37 @@ export function swung(shell: GarmentShell, swing: number): Vec3[] {
   const span = shell.topY - shell.bottomY;
   if (span <= 0) return shell.vertices;
 
-  // Shells hang off the midline — a sleeve is centred on its own arm — so the
-  // twist is about the body's axis, not the shell's, or the sleeve would
-  // rotate about itself and screw into the torso.
+  /*
+   * A ring is built symmetric around its own centre (x = cx + a·cos, z = cz +
+   * b·sin), so cosine and sine average to zero across it and the plain mean of
+   * a ring's own vertices recovers (cx, cz) exactly — no separate bookkeeping
+   * of the ring geometry has to travel alongside the shell for this. Grouped
+   * by height because that is the one coordinate every vertex on the same ring
+   * shares.
+   */
+  const centres = new Map<number, { x: number; z: number; n: number }>();
+  const ringKey = (y: number) => Math.round(y * 100);
+  for (const v of shell.vertices) {
+    const k = ringKey(v.y);
+    const c = centres.get(k);
+    if (c) {
+      c.x += v.x;
+      c.z += v.z;
+      c.n += 1;
+    } else {
+      centres.set(k, { x: v.x, z: v.z, n: 1 });
+    }
+  }
+
   return shell.vertices.map((v) => {
     const t = Math.max(0, Math.min(1, (shell.topY - v.y) / span));
     const angle = lag * t * t; // eased, so the shoulder stays put and the hem carries it
     const cos = Math.cos(angle), sin = Math.sin(angle);
-    return { x: v.x * cos + v.z * sin, y: v.y, z: -v.x * sin + v.z * cos };
+
+    const c = centres.get(ringKey(v.y))!;
+    const cx = c.x / c.n, cz = c.z / c.n;
+    const x = v.x - cx, z = v.z - cz;
+    return { x: cx + x * cos + z * sin, y: v.y, z: cz + (-x * sin + z * cos) };
   });
 }
 

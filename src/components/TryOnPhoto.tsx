@@ -8,7 +8,7 @@ import { Status, useStatus } from "./Status";
 import { CameraCapture, canvasToJpeg, shrinkFile } from "./ImageUploader";
 
 /**
- * See a garment on your own photograph.
+ * See a garment — or a whole outfit — on your own photograph.
  *
  * The figure beside this is drawn from measurements and answers whether the
  * thing fits. This answers a different question — what it looks like on you —
@@ -17,21 +17,37 @@ import { CameraCapture, canvasToJpeg, shrinkFile } from "./ImageUploader";
  * the arithmetic rather than replacing it, and says so.
  *
  * The photo is taken here rather than only on the profile page because this is
- * where the thought occurs. It is still saved to the profile: one photo of
- * you, reused by every garment and by the studio, replaceable from anywhere.
+ * where the thought occurs — on a single garment's own page, or in the studio
+ * while a whole outfit is assembled. It is still saved to the profile: one
+ * photo of you, reused everywhere, replaceable from anywhere it's shown.
  */
 export function TryOnPhoto({
-  garmentId,
-  garmentName,
-  hasGarmentPhoto,
+  garmentIds,
+  label,
+  hasAnyPhoto,
   initialPhotoId,
+  initialProvider,
 }: {
-  garmentId: string;
-  garmentName: string;
-  hasGarmentPhoto: boolean;
+  /** One garment's id on a garment page, or a whole outfit's from the studio. */
+  garmentIds: string[];
+  /**
+   * A bare noun for what's being rendered — "Navy oxford shirt", "outfit" —
+   * with no article and no case already applied. Both places this is quoted
+   * ("See the ___ on me", "wearing the ___") need the same grammar, so the
+   * component supplies it once rather than trusting every caller to match.
+   */
+  label: string;
+  /** Whether at least one of `garmentIds` has a photo of its own to render. */
+  hasAnyPhoto: boolean;
   initialPhotoId: string | null;
+  /**
+   * Skips the panel's own fetch when the page already read this server-side —
+   * every studio render otherwise re-asked a question its own parent already
+   * had the answer to, and flashed "Checking…" while it waited.
+   */
+  initialProvider?: ProviderStatus;
 }) {
-  const [provider, setProvider] = useState<ProviderStatus | null>(null);
+  const [provider, setProvider] = useState<ProviderStatus | null>(initialProvider ?? null);
   const [photoId, setPhotoId] = useState(initialPhotoId);
   const [camera, setCamera] = useState(false);
   const [liveCamera, setLiveCamera] = useState(false);
@@ -45,9 +61,10 @@ export function TryOnPhoto({
    * Whether a render is even possible is a property of the deployment, so it
    * is asked once and the whole panel is shaped by the answer. Offering a
    * camera that leads to "no provider configured" wastes somebody's time and
-   * their photo.
+   * their photo. Skipped entirely when the caller already knows.
    */
   useEffect(() => {
+    if (initialProvider) return;
     let cancelled = false;
     fetch("/api/tryon")
       .then((r) => (r.ok ? r.json() : null))
@@ -56,7 +73,21 @@ export function TryOnPhoto({
     return () => {
       cancelled = true;
     };
+    // Deliberately once: which provider is configured cannot change under a
+    // mounted page, so there is nothing for this to react to.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /*
+   * In the studio, `garmentIds` changes on every click as the outfit is built
+   * — a garment page's id never does. A render of last outfit's combination
+   * left on screen after the third item goes in would show a picture of
+   * clothes that are no longer selected, silently claiming to be current.
+   */
+  const idsKey = [...garmentIds].sort().join(",");
+  useEffect(() => {
+    setRender(null);
+  }, [idsKey]);
 
   // Decided after mount: `navigator` doesn't exist on the server, and
   // getUserMedia is absent outside a secure context, which is every plain-HTTP
@@ -118,7 +149,7 @@ export function TryOnPhoto({
       const res = await fetch("/api/tryon", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ garmentIds: [garmentId], refresh }),
+        body: JSON.stringify({ garmentIds, refresh }),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json.error ?? "The render failed.");
@@ -157,19 +188,27 @@ export function TryOnPhoto({
     );
   }
 
-  if (!hasGarmentPhoto) {
+  if (!hasAnyPhoto) {
+    const single = garmentIds.length === 1;
     return (
       <Card className="p-5">
-        <p className="text-[0.9375rem]">This garment has no photo to put on you.</p>
+        <p className="text-[0.9375rem]">
+          {single ? "This garment has" : "Nothing in this outfit has"} a photo to put on you.
+        </p>
         <p className="mt-2 text-sm text-[var(--color-muted)]">
-          A render needs a picture of the item itself.{" "}
-          <Link
-            href={`/wardrobe/${garmentId}/edit`}
-            className="text-[var(--color-accent)] hover:underline"
-          >
-            Add one
-          </Link>
-          .
+          A render needs a picture of the item itself.
+          {single && (
+            <>
+              {" "}
+              <Link
+                href={`/wardrobe/${garmentIds[0]}/edit`}
+                className="text-[var(--color-accent)] hover:underline"
+              >
+                Add one
+              </Link>
+              .
+            </>
+          )}
         </p>
       </Card>
     );
@@ -193,7 +232,7 @@ export function TryOnPhoto({
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
               <Button onClick={() => run(false)} disabled={busy !== null}>
-                {busy === "render" ? "Rendering…" : `See the ${garmentName.toLowerCase()} on me`}
+                {busy === "render" ? "Rendering…" : `See the ${label.toLowerCase()} on me`}
               </Button>
               <Button
                 variant="ghost"
@@ -210,8 +249,8 @@ export function TryOnPhoto({
           <p className="text-[0.9375rem]">Take a photo of yourself and see it on you.</p>
           <p className="mt-2 text-sm leading-relaxed text-[var(--color-muted)]">
             Stand square to the camera, arms slightly away from your body, against a plain wall,
-            with as much of you in frame as you can manage. It is taken once and used for every
-            garment.
+            with as much of you in frame as you can manage. It is taken once and used everywhere
+            this app shows you in something.
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
             {liveCamera && (
@@ -249,7 +288,7 @@ export function TryOnPhoto({
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={render.image}
-            alt={`A render of you wearing ${garmentName}`}
+            alt={`A render of you wearing the ${label.toLowerCase()}`}
             className="max-h-[30rem] rounded-xl border border-[var(--color-line)]"
           />
           <div className="mt-2 flex flex-wrap items-center gap-3">

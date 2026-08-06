@@ -22,8 +22,17 @@ import {
   VerdictBadge,
 } from "./ui";
 import { ScreenReaderStatus } from "./Status";
+import { TryOnPhoto } from "./TryOnPhoto";
 
 const ORDER: GarmentCategory[] = ["top", "bottom", "dress", "outerwear", "shoes", "accessory", "bag"];
+
+/**
+ * Categories a render can actually put cloth on. Matches `/api/tryon`'s own
+ * filter exactly — sending the rest would either be silently dropped there or,
+ * once a shoe and a bag and an accessory are all picked alongside a full
+ * outfit, pushed past the four the endpoint accepts in one request.
+ */
+const RENDERABLE: GarmentCategory[] = ["dress", "top", "bottom", "outerwear"];
 
 interface ScoreResponse {
   score: ScoreResult;
@@ -37,11 +46,13 @@ export function Studio({
   measurements,
   unit,
   provider,
+  bodyPhotoId,
 }: {
   wardrobe: Garment[];
   measurements: BodyMeasurements;
   unit: Unit;
   provider: ProviderStatus;
+  bodyPhotoId: string | null;
 }) {
   const router = useRouter();
   const search = useSearchParams();
@@ -61,12 +72,14 @@ export function Studio({
   const [scoring, setScoring] = useState(false);
   const [logged, setLogged] = useState(false);
 
-  const [tryOn, setTryOn] = useState<{ busy: boolean; image?: string; error?: string }>({ busy: false });
-
   const byId = useMemo(() => new Map(wardrobe.map((g) => [g.id, g])), [wardrobe]);
   const chosen = useMemo(
     () => selected.map((id) => byId.get(id)).filter((g): g is Garment => Boolean(g)),
     [selected, byId],
+  );
+  const renderable = useMemo(
+    () => chosen.filter((g) => RENDERABLE.includes(g.category)),
+    [chosen],
   );
 
   /* Debounced live scoring: the studio re-scores on every toggle, so a burst of
@@ -101,7 +114,6 @@ export function Studio({
   useEffect(() => {
     runScore(selected, occasion);
     setLogged(false);
-    setTryOn({ busy: false });
   }, [selected, occasion, runScore]);
 
   function toggle(id: string) {
@@ -135,21 +147,6 @@ export function Studio({
     });
     setLogged(true);
     router.refresh();
-  }
-
-  async function renderTryOn() {
-    setTryOn({ busy: true });
-    try {
-      const res = await fetch("/api/tryon", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ garmentIds: selected }),
-      });
-      const json = await res.json();
-      setTryOn(json.ok ? { busy: false, image: json.image } : { busy: false, error: json.error });
-    } catch {
-      setTryOn({ busy: false, error: "Render failed." });
-    }
   }
 
   const visible = wardrobe.filter((g) => {
@@ -263,14 +260,9 @@ export function Studio({
           <Card className="p-4">
             <div className="flex items-center justify-between">
               <p className="font-medium">The outfit</p>
-              <div className="flex gap-2">
-                <Button variant="ghost" onClick={renderTryOn} disabled={tryOn.busy || !chosen.length}>
-                  {tryOn.busy ? "Rendering…" : "Try it on"}
-                </Button>
-                <Button onClick={logWear} disabled={!chosen.length || logged}>
-                  {logged ? "Logged" : "I wore this"}
-                </Button>
-              </div>
+              <Button onClick={logWear} disabled={!chosen.length || logged}>
+                {logged ? "Logged" : "I wore this"}
+              </Button>
             </div>
 
             {chosen.length === 0 ? (
@@ -313,41 +305,17 @@ export function Studio({
                 </div>
               </>
             )}
-
-            {tryOn.image && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={tryOn.image}
-                alt="Virtual try-on render"
-                className="mt-4 max-h-[28rem] rounded-lg border border-[var(--color-line)]"
-              />
-            )}
-            {tryOn.error && (
-              <p className="mt-3 rounded-lg border border-[var(--color-line-soft)] bg-[var(--color-raised)] p-3 text-xs text-[var(--color-muted)]">
-                {tryOn.error} The figure above is drawn from your measurements and needs none of
-                that — and the score to the right is what actually answers whether it fits.
-              </p>
-            )}
-
-            {/*
-              Stated up front rather than discovered by pressing the button and
-              reading the failure. "I pasted the key and nothing happened" is
-              the whole reason this line exists.
-            */}
-            <p className="mt-3 text-[11px] leading-relaxed text-[var(--color-faint)]">
-              Photo render: {provider.label}
-              {provider.configured && provider.id !== "none" ? (
-                <>
-                  {" "}
-                  — ready
-                  {provider.source === "inferred" && " (picked up from the API key you set)"}. Each
-                  layer costs about $0.075 and needs a full-length photo of you on the You page.
-                </>
-              ) : (
-                <> — {provider.hint}</>
-              )}
-            </p>
           </Card>
+
+          {chosen.length > 0 && (
+            <TryOnPhoto
+              garmentIds={renderable.map((g) => g.id)}
+              label={renderable.length === 1 ? renderable[0].name : "outfit"}
+              hasAnyPhoto={renderable.some((g) => g.imageIds.length > 0)}
+              initialPhotoId={bodyPhotoId}
+              initialProvider={provider}
+            />
+          )}
         </div>
 
         {/* ---------------------------------------------------- verdict -- */}

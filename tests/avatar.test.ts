@@ -791,6 +791,58 @@ describe("cloth swings without changing size", () => {
     );
   });
 
+  /*
+   * Every test above builds its shell with `shellOf`, which always picks
+   * `part === "body"` — a torso shell, whose own centre already sits close to
+   * the spine. Rotating "about the body's axis" and "about the shell's own
+   * axis" come out nearly identical there, so none of them could have caught
+   * an axis mistake; they'd pass unchanged either way. A leg or a sleeve is
+   * the opposite case: a narrow tube sitting well off to one side, which is
+   * exactly where the two axes stop agreeing.
+   */
+  test("a trouser leg swings about its own ankle, not the far side of the body", () => {
+    const trousers = buildGarments(mesh.frame, [
+      piece("wide-leg-trousers", "bottom", { waistFlat: 44, hipFlat: 56, thighFlat: 34, legOpeningFlat: 24 }),
+    ]).shells;
+    const legs = trousers.filter((s) => s.part === "leg");
+    assert.equal(legs.length, 2, "expected two trouser legs");
+
+    // A ring is built symmetric around its own centre, so the plain mean of
+    // its own vertices recovers that centre — no separate geometry needed.
+    const ringCentre = (vertices: { x: number; y: number; z: number }[], y: number) => {
+      let x = 0, z = 0, n = 0;
+      for (const v of vertices) {
+        if (Math.abs(v.y - y) > 0.5) continue;
+        x += v.x; z += v.z; n++;
+      }
+      return { x: x / n, z: z / n };
+    };
+
+    for (const leg of legs) {
+      const before = ringCentre(leg.vertices, leg.bottomY);
+      // The largest lag the spring in BodyAvatar ever reaches, so this is the
+      // worst case an actual drag produces rather than a contrived extreme.
+      const after = ringCentre(swung(leg, 0.34), leg.bottomY);
+      const drift = Math.hypot(after.x - before.x, after.z - before.z);
+      assert.ok(
+        drift < 0.01,
+        `the ankle's own axis moved ${drift.toFixed(2)}cm — the trouser leg swung away from the leg it's on`,
+      );
+    }
+  });
+
+  test("but the coat it sits under still visibly sweeps", () => {
+    // The whole reason a per-shell axis exists rather than just holding limb
+    // shells still: it must not quietly zero out the effect on a torso piece.
+    const moved = swung(loose, 0.34);
+    let sweep = 0;
+    for (let i = 0; i < loose.vertices.length; i++) {
+      if (Math.abs(loose.vertices[i].y - loose.bottomY) > 0.5) continue;
+      sweep = Math.max(sweep, Math.hypot(moved[i].x - loose.vertices[i].x, moved[i].z - loose.vertices[i].z));
+    }
+    assert.ok(sweep > 4, `the coat hem only swept ${sweep.toFixed(1)}cm — the flare effect got lost`);
+  });
+
   test("swing is bounded, so a fast spin can't wring the cloth round the body", () => {
     const violent = swung(loose, 5);
     for (let i = 0; i < loose.vertices.length; i++) {
