@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 import { buildBody, ellipseAxes, type BodyMesh, type Face, type Vec3 } from "../src/lib/avatar/body.ts";
 import { buildGarments, type GarmentShell } from "../src/lib/avatar/garment.ts";
-import { layerAlpha, swung } from "../src/lib/avatar/render.ts";
+import { garmentDepthBias, layerAlpha, rotate, swung } from "../src/lib/avatar/render.ts";
 import { SUBCATEGORY_LIST, assumedSleeveLength, sleeveKind } from "../src/lib/data/garmentTypes.ts";
 import type { BodyMeasurements, Garment, GarmentMeasurements } from "../src/lib/types.ts";
 
@@ -902,5 +902,134 @@ describe("clothes arrive in the order they are worn", () => {
     // `dressed` sweeps down on the way out, so the outer layer leaves first —
     // which is also the order you would take them off.
     assert.ok(layerAlpha(0.3, 4, span) < layerAlpha(0.3, 0, span));
+  });
+});
+
+/*
+ * The painter's algorithm sorts every face — body and every garment — by a
+ * single depth number, and a garment's own layer gets a bias added to that
+ * number so an outer layer reliably wins the sort against an inner one. That
+ * bias only has to beat one thing: how far apart two *overlapping* faces'
+ * real depths can get. A per-face average z compares two whole triangles, and
+ * a wide, gently-curved shell — a shirt's hem, wrapping the entire torso —
+ * sits close to its own tangent line at the silhouette's edge, while a narrow
+ * tube underneath it — a trouser leg, wrapped tightly around one limb — can
+ * have a face on that same screen column pointed almost straight at the
+ * camera. That is a fact about the *shape*, not the layering, and it used to
+ * beat the bias: a hem sitting anywhere near a leg or a sleeve let the wrong
+ * layer win in bands, visible as the inner garment's colour showing through
+ * the outer one in vertical stripes — at rest, no dragging required.
+ */
+describe("an outer layer never loses the sort to the one underneath it", () => {
+  const mesh = buildBody(FULL);
+
+  function garment(
+    id: string,
+    category: Garment["category"],
+    subcategory: string,
+    measurements: GarmentMeasurements,
+    fitIntent: Garment["fitIntent"],
+  ): Garment {
+    return {
+      id, name: id, category, subcategory,
+      colors: [{ hex: "#333", share: 1 }], pattern: "solid", patternScale: "none",
+      fabric: { wool: 1 }, formality: 3, careState: "clean", fitIntent,
+      wearCount: 0, lastWornAt: null, archivedAt: null,
+      createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z",
+      measurements, seasons: ["autumn"], imageIds: [],
+    };
+  }
+
+  // A spread from a fitted pairing to a deliberately oversized one — not just
+  // the one combination that first showed the bug. A fix tuned to a single
+  // fixture is exactly how this shipped unnoticed the first time.
+  const fixtures: [Garment, Garment][] = [
+    [
+      garment("outer", "top", "shirt", { chestFlat: 54, waistFlat: 52, bodyLength: 76 }, "regular"),
+      garment("inner", "bottom", "chinos", { waistFlat: 44, hipFlat: 54, thighFlat: 32, inseam: 79 }, "regular"),
+    ],
+    [
+      garment("outer", "outerwear", "overcoat", { chestFlat: 70, waistFlat: 68, bodyLength: 70 }, "oversized"),
+      garment("inner", "bottom", "wide-leg-trousers", { waistFlat: 42, hipFlat: 62, inseam: 79 }, "oversized"),
+    ],
+    [
+      garment("outer", "outerwear", "overcoat", { chestFlat: 64, waistFlat: 62, bodyLength: 60 }, "regular"),
+      garment("inner", "bottom", "jeans", { waistFlat: 40, hipFlat: 48, thighFlat: 28, inseam: 80 }, "slim"),
+    ],
+    [
+      garment("outer", "top", "sweater", { chestFlat: 58, waistFlat: 56, bodyLength: 68 }, "relaxed"),
+      garment("inner", "bottom", "cargo-pants", { waistFlat: 46, hipFlat: 58, thighFlat: 36, legOpeningFlat: 26, inseam: 78 }, "oversized"),
+    ],
+  ];
+
+  /** The face-depth half of `render.ts`'s `collect()`, without the drawing. */
+  function biasedDepth(shell: GarmentShell, face: Face, yaw: number): number {
+    const [i0, i1, i2] = face.v;
+    const z =
+      [i0, i1, i2]
+        .map((i) => rotate(shell.vertices[i], yaw, 0).z)
+        .reduce((a, b) => a + b, 0) / 3;
+    return z + garmentDepthBias(shell.layer);
+  }
+  function screenX(shell: GarmentShell, vi: number, yaw: number): number {
+    return rotate(shell.vertices[vi], yaw, 0).x;
+  }
+  function faceY(shell: GarmentShell, face: Face): number {
+    const [i0, i1, i2] = face.v;
+    return (shell.vertices[i0].y + shell.vertices[i1].y + shell.vertices[i2].y) / 3;
+  }
+
+  test("a wide hem still sorts in front of a narrow limb underneath it, at every angle", () => {
+    let checked = 0;
+    let worstInversion = 0;
+    let worstAt = "";
+
+    for (const [outerG, innerG] of fixtures) {
+      const { shells } = buildGarments(mesh.frame, [outerG, innerG]);
+      const outerShells = shells.filter((s) => s.garmentId === "outer");
+      const innerShells = shells.filter((s) => s.garmentId === "inner");
+
+      for (let deg = 0; deg < 360; deg += 15) {
+        const yaw = (deg * Math.PI) / 180;
+
+        for (const inner of innerShells) {
+          for (const innerFace of inner.faces) {
+            const iY = faceY(inner, innerFace);
+
+            for (const outer of outerShells) {
+              // Only where the two shells actually share height — an inner
+              // face well outside the outer shell's span isn't the one it's
+              // meant to cover, and isn't a competing face at all.
+              if (iY < outer.bottomY - 1 || iY > outer.topY + 1) continue;
+
+              const [ii0, ii1, ii2] = innerFace.v;
+              const iX = (screenX(inner, ii0, yaw) + screenX(inner, ii1, yaw) + screenX(inner, ii2, yaw)) / 3;
+              const iDepth = biasedDepth(inner, innerFace, yaw);
+
+              for (const outerFace of outer.faces) {
+                const oY = faceY(outer, outerFace);
+                if (Math.abs(oY - iY) > 2) continue;
+                const [oi0, oi1, oi2] = outerFace.v;
+                const oX = (screenX(outer, oi0, yaw) + screenX(outer, oi1, yaw) + screenX(outer, oi2, yaw)) / 3;
+                if (Math.abs(oX - iX) > 1.5) continue; // not actually competing for the same pixels
+
+                checked++;
+                const margin = biasedDepth(outer, outerFace, yaw) - iDepth;
+                if (margin < worstInversion) {
+                  worstInversion = margin;
+                  worstAt = `${outerG.subcategory}/${innerG.subcategory} at yaw=${deg}°, y=${iY.toFixed(0)}cm`;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    assert.ok(checked > 100, `only checked ${checked} competing face pairs — the fixtures may not overlap as intended`);
+    assert.ok(
+      worstInversion >= 0,
+      `the inner layer won the sort by ${(-worstInversion).toFixed(1)}cm (${worstAt}) — it would show through the outer garment`,
+    );
   });
 });

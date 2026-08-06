@@ -42,7 +42,8 @@ export const DEFAULT_THEME: Theme = {
   label: "rgba(50,48,47,0.9)",
 };
 
-function rotate(p: Vec3, yaw: number, pitch: number): Vec3 {
+/** Exported so a test can project a shell's own vertices the same way the renderer does. */
+export function rotate(p: Vec3, yaw: number, pitch: number): Vec3 {
   const cy = Math.cos(yaw), sy = Math.sin(yaw);
   const x1 = p.x * cy + p.z * sy;
   const z1 = -p.x * sy + p.z * cy;
@@ -79,6 +80,33 @@ export interface RenderOptions {
   width: number;
   height: number;
   unitLabel?: (cm: number) => string;
+}
+
+/**
+ * How far a garment's draw-order key is pushed toward the viewer, by layer.
+ *
+ * Has to beat curvature, not just standoff. A per-face average z compares two
+ * whole triangles, and a wide, gently-curved shell — a shirt's hem, wrapping
+ * the entire torso — sits close to its own tangent line at the edge of the
+ * silhouette, while a narrow tube underneath it — a trouser leg, wrapped
+ * tightly around one limb — can have a face on that same screen column
+ * pointed almost straight at the camera. Those are facts about the *shape*,
+ * not the layering, and they can separate two shells' raw depths by tens of
+ * centimetres — which a bias sized only for standoff (a couple of
+ * centimetres) loses to every time. That loss is exactly what used to happen:
+ * a hem sitting anywhere near a leg or a sleeve let the layer underneath win
+ * the sort in bands, visible as the wrong colour showing through in vertical
+ * stripes at rest, no motion required.
+ *
+ * 100 comes from measuring, not guessing: swept across four outer/inner
+ * pairs — a fitted shirt over chinos up to an oversized coat over wide-leg
+ * trousers — at every camera angle in 15° steps, the worst raw mismatch found
+ * was 50cm (`tests/avatar.test.ts` pins that sweep down as a regression). 100
+ * clears it with room to spare, and costs nothing extra to compute — one
+ * scalar added to a sort key the layering needed anyway.
+ */
+export function garmentDepthBias(layer: number): number {
+  return 3 + layer * 100;
 }
 
 /** One shaded polygon, resolved far enough to sort against every other. */
@@ -206,23 +234,14 @@ export function renderBody(
       const alpha = layerAlpha(dressed, shell.layer, span);
       if (alpha <= 0.01) continue;
 
-      collect(
-        swung(shell, swing),
-        shell.faces,
-        hexToRgb(shell.hex),
-        alpha,
-        /*
-         * Layers are separated widely here because two garments genuinely can
-         * occupy the same space: both get clamped to the body's minimum
-         * standoff wherever each is tighter than the wearer, so a jumper and
-         * the coat over it come out at exactly the same radius below the
-         * waist. The geometry is right — both really are against the body —
-         * and which one you see is a drawing question, so it is settled with
-         * the sort key rather than by inflating the shells and spoiling the
-         * gap the whole picture exists to show.
-         */
-        3 + shell.layer * 2.6,
-      );
+      // Two garments genuinely can occupy the same space: both get clamped to
+      // the body's minimum standoff wherever each is tighter than the
+      // wearer, so a jumper and the coat over it come out at exactly the
+      // same radius below the waist. The geometry is right — both really are
+      // against the body — and which one is seen is a drawing question, so
+      // it is settled with the sort key. See `garmentDepthBias` for why the
+      // margin has to be as large as it is.
+      collect(swung(shell, swing), shell.faces, hexToRgb(shell.hex), alpha, garmentDepthBias(shell.layer));
     }
   }
 

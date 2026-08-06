@@ -126,6 +126,21 @@ one side, and turning it about the *body's* axis instead swings a whole limb's
 worth of cloth sideways in an arc rather than in place, which read as the
 garment visibly leaving the leg it was on while the figure was being dragged.
 
+Layering has a matching fix, for a defect that needed no dragging at all: a
+wide, gently-curved shell like a shirt's hem sits close to its own tangent line
+at the edge of the silhouette, while a narrow tube underneath it — a trouser
+leg wrapped tightly around one limb — can have a face on that same screen
+column pointed almost straight at the camera. Comparing whole triangles by
+their average depth, that is a fact about *shape*, not which garment sits on
+top, and it used to beat the margin meant to keep layers apart: a hem sitting
+near a leg or a sleeve let the layer underneath win the sort in bands, the
+inner garment's colour showing through the outer one in vertical stripes,
+plainly visible on a figure that was not moving at all. Fixed by measuring
+rather than guessing — swept across four outer/inner pairs from a fitted shirt
+over chinos to an oversized coat over wide-leg trousers, at every camera angle,
+the worst mismatch found was 50cm, and the margin between layers is now sized
+to clear that with room to spare.
+
 It is the same renderer as the You page, drawing into the same 2D canvas — no
 WebGL, no model, nothing fetched.
 
@@ -435,14 +450,14 @@ src/lib/
   tryon.ts                 pluggable render providers
 src/app/                   Next.js App Router pages and API routes
 src/components/            UI, including client-side colour extraction
-tests/                     261 tests; some need a database, some a running server
+tests/                     267 tests; some need a database, some a running server
 ```
 
 ## Development
 
 ```bash
 npm run dev        # dev server
-npm test           # 236 with a database, 222 without (the rest skip cleanly)
+npm test           # 239 with a database, 225 without (the rest skip cleanly)
                    # 28 more run over HTTP in CI, against a booted server
 npm run typecheck  # tsc --noEmit
 npm run build      # production build
