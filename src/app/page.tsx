@@ -88,7 +88,7 @@ export default async function Today({
               key={key}
               href={`/?occasion=${key}`}
               style={{ "--delay": `${i * 22}ms` } as React.CSSProperties}
-              className={`rise rounded-full border px-4 py-2 text-sm transition-colors ${
+              className={`rise inline-flex min-h-11 items-center rounded-full border px-4 py-2 text-sm transition-colors sm:min-h-0 ${
                 key === occasion
                   ? "border-[var(--color-ink)] bg-[var(--color-ink)] text-white"
                   : "border-[var(--color-line)] bg-[var(--color-paper)] text-[var(--color-muted)] hover:border-[var(--color-ink)] hover:text-[var(--color-text)]"

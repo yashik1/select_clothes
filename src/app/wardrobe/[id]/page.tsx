@@ -48,9 +48,14 @@ export default async function GarmentPage({ params }: { params: Promise<{ id: st
 
   return (
     <div className="space-y-8">
-      <div className="grid gap-6 lg:grid-cols-[18rem_1fr]">
+      <div className="grid gap-6 lg:grid-cols-[18rem_1fr] [&>*]:min-w-0">
         <div>
-          <div className="aspect-[3/4] overflow-hidden rounded-2xl border border-[var(--color-line)] bg-[var(--color-raised)]">
+          {/*
+            Capped on a phone. A 3:4 box at the full width of a 390px screen
+            is 520px tall — most of the viewport spent on the photo, with the
+            garment's own name pushed below the fold.
+          */}
+          <div className="mx-auto aspect-[3/4] max-w-[15rem] overflow-hidden rounded-2xl border border-[var(--color-line)] bg-[var(--color-raised)] sm:max-w-none">
             <GarmentThumb garment={garment} />
           </div>
           {garment.imageIds.length > 1 && (
@@ -241,7 +246,7 @@ export default async function GarmentPage({ params }: { params: Promise<{ id: st
       </div>
 
       {/* --------------------------------------------------- pairings -- */}
-      <div className="grid gap-6 lg:grid-cols-[1fr_20rem]">
+      <div className="grid gap-6 lg:grid-cols-[1fr_20rem] [&>*]:min-w-0">
         <div>
           <SectionTitle hint="Complete outfits built around this piece, scored against today.">
             What goes with it

@@ -37,7 +37,15 @@ export function OutfitCard({
 
   return (
     <Card className="group overflow-hidden" interactive={Boolean(href)} delay={delay}>
-      <div className="flex gap-5 p-5">
+      {/*
+        Side by side needs room for four thumbnails, a score ring and a
+        headline at once. At 390px it had none: the thumbnails and the ring
+        are both fixed widths, so everything they didn't take went to the
+        text, which came out 76px wide — a headline reduced to two words a
+        line and a garment list that was pure ellipsis. Stacked, the text gets
+        the full width and the thumbnails read as a row of what's in it.
+      */}
+      <div className="flex flex-col gap-4 p-4 sm:flex-row sm:gap-5 sm:p-5">
         <div className="relative flex shrink-0 gap-1.5">
           {rank !== undefined && (
             <span className="tabular absolute -left-2 -top-2 z-10 flex h-6 w-6 items-center justify-center rounded-full bg-[var(--color-ink)] text-[11px] font-medium text-white">
@@ -72,7 +80,7 @@ export function OutfitCard({
       </div>
 
       {(score.topFixes.length > 0 || positives.length > 0) && (
-        <ul className="border-t border-[var(--color-line-soft)] bg-[var(--color-surface)] px-5 py-3">
+        <ul className="border-t border-[var(--color-line-soft)] bg-[var(--color-surface)] px-4 py-3 sm:px-5">
           {score.topFixes.slice(0, compact ? 1 : 2).map((r, i) => (
             <ReasonRow key={`fix-${i}`} reason={r} />
           ))}
@@ -83,7 +91,7 @@ export function OutfitCard({
       )}
 
       {href && (
-        <div className="border-t border-[var(--color-line-soft)] px-5 py-3">
+        <div className="border-t border-[var(--color-line-soft)] px-4 py-3 sm:px-5">
           <Link
             href={href}
             className="inline-flex items-center gap-1.5 text-sm font-medium text-[var(--color-text)] transition-colors hover:text-[var(--color-muted)]"

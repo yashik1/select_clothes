@@ -49,7 +49,11 @@ function useReducedMotion(): boolean {
  * the click landed, and anything longer would be in the way by the third tap.
  */
 const PILL =
-  "rounded-full border px-3 py-1 text-xs transition-[transform,background-color,border-color,color] " +
+  // 40px on a phone rather than the full 44: seven of these sit in one row
+  // directly under the figure, and at 44 they start competing with it for the
+  // screen. Still half again the 26px they were, which was a genuine miss.
+  "inline-flex min-h-10 items-center rounded-full border px-3 py-1 text-xs sm:min-h-0 " +
+  "transition-[transform,background-color,border-color,color] " +
   "duration-150 ease-[var(--ease-out)] active:scale-[0.97]";
 const PILL_OFF =
   "border-[var(--color-line)] bg-[var(--color-paper)] text-[var(--color-muted)] hover:border-[var(--color-ink)] hover:text-[var(--color-text)]";

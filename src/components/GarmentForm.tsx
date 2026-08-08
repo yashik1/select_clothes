@@ -252,7 +252,7 @@ export function GarmentForm({ profile, initial }: { profile: Profile; initial?: 
 
       {!initial && <ImportBar onImport={applyImport} />}
 
-      <div className="grid gap-6 lg:grid-cols-[1fr_20rem]">
+      <div className="grid gap-6 lg:grid-cols-[1fr_20rem] [&>*]:min-w-0">
         <div className="space-y-6">
           {/* ------------------------------------------------- photos -- */}
           <Card className="p-5">

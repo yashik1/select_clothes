@@ -181,7 +181,7 @@ export function Studio({
           <button
             key={key}
             onClick={() => setOccasion(key)}
-            className={`rounded-full border px-3 py-1.5 text-xs transition-colors ${
+            className={`inline-flex min-h-11 items-center rounded-full border px-3 py-1.5 text-xs transition-colors sm:min-h-0 ${
               key === occasion
                 ? "border-[var(--color-accent)] bg-[var(--color-accent)]/10 text-[var(--color-accent)]"
                 : "border-[var(--color-line)] text-[var(--color-muted)] hover:border-[var(--color-muted)]"
@@ -192,7 +192,7 @@ export function Studio({
         ))}
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-[1fr_22rem]">
+      <div className="grid gap-6 lg:grid-cols-[1fr_22rem] [&>*]:min-w-0">
         {/* --------------------------------------------------- picker -- */}
         <div className="space-y-4">
           <Card className="p-4">
@@ -206,7 +206,7 @@ export function Studio({
               />
               <button
                 onClick={() => setActiveCategory("all")}
-                className={`rounded-full border px-2.5 py-1 text-xs ${
+                className={`inline-flex min-h-11 items-center rounded-full border px-2.5 py-1 text-xs sm:min-h-0 ${
                   activeCategory === "all"
                     ? "border-[var(--color-accent)] text-[var(--color-accent)]"
                     : "border-[var(--color-line)] text-[var(--color-muted)]"
@@ -218,7 +218,7 @@ export function Studio({
                 <button
                   key={c}
                   onClick={() => setActiveCategory(c)}
-                  className={`rounded-full border px-2.5 py-1 text-xs ${
+                  className={`inline-flex min-h-11 items-center rounded-full border px-2.5 py-1 text-xs sm:min-h-0 ${
                     activeCategory === c
                       ? "border-[var(--color-accent)] text-[var(--color-accent)]"
                       : "border-[var(--color-line)] text-[var(--color-muted)]"

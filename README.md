@@ -368,6 +368,36 @@ a number.
 
 ---
 
+## On a phone
+
+This is an app you use standing in front of a wardrobe, so the phone layout is
+the one that has to be right — and for a long time it was not. Every page
+scrolled sideways, and the header was the reason: seven nav links in a wrapping
+row had nowhere to go at 390px, so they wrapped into a seven-line column. The
+header alone came to 630px of an 844px screen, three quarters of the viewport
+gone before the first heading. The garment page laid itself out 660px wide
+inside a 390px window. An outfit card gave its headline 76px, because the
+thumbnails and the score ring either side of it were both fixed widths.
+
+What it does now:
+
+- **The nav gets its own row and scrolls sideways.** All seven destinations stay
+  visible and labelled rather than folding into a hamburger — this is a bar you
+  move along constantly, and a menu that has to be opened hides where you are as
+  well as where you could go. Inline in the header from `lg` up, where it fits.
+- **Cards stack.** An outfit card puts its thumbnails above the text instead of
+  beside it, so the headline gets the full width.
+- **Tap targets are thumb-sized.** Occasion pills, filters and the figure's view
+  controls were 26–38px; the ones you press most are 44px on touch and unchanged
+  on a mouse, so desktop keeps its density.
+
+`tests/layout.test.ts` measures the rendered document against the width of the
+screen it is on, at 360px, 390px and 1280px, and fails if anything sticks out or
+the header grows back. It is a real browser at a real width because none of the
+above is visible from a desktop window or a component test.
+
+---
+
 ## Deploying to Railway
 
 1. **New Project → Deploy from GitHub repo**, and pick this repository.
@@ -450,7 +480,7 @@ src/lib/
   tryon.ts                 pluggable render providers
 src/app/                   Next.js App Router pages and API routes
 src/components/            UI, including client-side colour extraction
-tests/                     267 tests; some need a database, some a running server
+tests/                     272 tests; some need a database, some a browser
 ```
 
 ## Development
@@ -458,7 +488,8 @@ tests/                     267 tests; some need a database, some a running serve
 ```bash
 npm run dev        # dev server
 npm test           # 239 with a database, 225 without (the rest skip cleanly)
-                   # 28 more run over HTTP in CI, against a booted server
+                   # 33 more run in CI against a booted server: the auth
+                   # boundary over HTTP, and the layout in a real browser
 npm run typecheck  # tsc --noEmit
 npm run build      # production build
 npm run seed       # reset to the demo wardrobe (--force if not empty)

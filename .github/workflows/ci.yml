@@ -80,3 +80,16 @@ jobs:
         env:
           FITCHECK_TEST_URL: http://127.0.0.1:3000
         run: npx tsx --test tests/routes.test.ts
+
+      # Whether it fits a phone is a property of the rendered document, so it
+      # needs a real browser at a real width. Chromium comes with the runner.
+      - name: Does it fit a phone
+        env:
+          FITCHECK_TEST_URL: http://127.0.0.1:3000
+        run: |
+          npx playwright install --with-deps chromium
+          npx tsx --test tests/layout.test.ts | tee layout.log
+          # The suite skips itself when no browser is available, and a silent
+          # skip would otherwise read as a pass. Assert it really ran.
+          grep -q "^# pass 5" layout.log \
+            || { echo "the layout suite did not run its five checks"; exit 1; }

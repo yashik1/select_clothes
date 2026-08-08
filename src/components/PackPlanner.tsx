@@ -98,12 +98,14 @@ export function PackPlanner() {
           </div>
         </div>
 
-        <label className="flex items-center gap-2 text-sm text-[var(--color-muted)]">
+        {/* The label carries the height so the whole phrase is the target,
+            which is what a checkbox label is for. */}
+        <label className="flex min-h-11 items-center gap-2 text-sm text-[var(--color-muted)]">
           <input
             type="checkbox"
             checked={rain}
             onChange={(e) => setRain(e.target.checked)}
-            className="!w-auto accent-[var(--color-accent)]"
+            className="!h-5 !w-5 accent-[var(--color-accent)]"
           />
           Rain is likely
         </label>

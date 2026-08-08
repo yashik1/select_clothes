@@ -452,6 +452,11 @@ export function ProfileForm({ initial }: { initial: Profile }) {
                   min={1}
                   max={10}
                   step={1}
+                  // A bare range input is a 16px-tall hairline — findable with
+                  // a mouse, fiddly with a thumb. The extra height is padding
+                  // around the track, so the control looks the same and is
+                  // simply easier to catch.
+                  className="h-11 w-full cursor-pointer accent-[var(--color-accent)]"
                   value={coloring.skinDepth ?? 5}
                   onChange={(e) => { setColoring({ ...coloring, skinDepth: Number(e.target.value) }); setSaved(false); }}
                 />

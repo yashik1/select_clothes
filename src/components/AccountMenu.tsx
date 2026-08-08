@@ -31,7 +31,7 @@ export function AccountMenu({ email }: { email: string }) {
       <button
         onClick={signOut}
         disabled={busy}
-        className="rounded-md px-2 py-1.5 text-sm text-[var(--color-muted)] transition-colors hover:bg-[var(--color-raised)] hover:text-[var(--color-text)] disabled:opacity-50"
+        className="flex min-h-11 shrink-0 items-center whitespace-nowrap rounded-md px-2 text-sm text-[var(--color-muted)] transition-colors hover:bg-[var(--color-raised)] hover:text-[var(--color-text)] disabled:opacity-50"
       >
         {busy ? "…" : "Sign out"}
       </button>
