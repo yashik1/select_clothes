@@ -11,6 +11,7 @@ const NAV = [
   { href: "/gaps", label: "Gaps" },
   { href: "/pack", label: "Pack" },
   { href: "/insights", label: "Insights" },
+  { href: "/stylist", label: "AI Stylist" },
   { href: "/profile", label: "You" },
 ];
 
