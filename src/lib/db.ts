@@ -21,9 +21,11 @@ import type {
   DayPlan,
   FitFeedback,
   Garment,
+  Inspiration,
   Outfit,
   Profile,
   WearLog,
+  WishlistItem,
 } from "./types";
 
 /* ------------------------------------------------------------ connection -- */
@@ -203,6 +205,37 @@ const SCHEMA = `
   );
   CREATE UNIQUE INDEX IF NOT EXISTS plan_user_date ON plan(user_id, date);
 
+  -- Things you are considering buying, and reference photos of other people's
+  -- outfits. Both of these lived in localStorage to begin with, which made them
+  -- the only part of the app that was not in the database: absent from the
+  -- account export, left behind by account deletion, and gone if you opened the
+  -- app on a different phone.
+  CREATE TABLE IF NOT EXISTS wishlist (
+    id          TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
+    -- The product URL, or "manual:<name>". Unique per account, never globally:
+    -- two people may be looking at the same jumper.
+    key         TEXT NOT NULL,
+    name        TEXT NOT NULL,
+    url         TEXT,
+    image_id    TEXT,
+    data        JSONB NOT NULL,
+    created_at  TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS wishlist_user ON wishlist(user_id);
+  CREATE UNIQUE INDEX IF NOT EXISTS wishlist_user_key ON wishlist(user_id, key);
+
+  CREATE TABLE IF NOT EXISTS inspiration (
+    id          TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
+    name        TEXT NOT NULL,
+    -- Not null: a reference board entry with no picture is nothing at all.
+    image_id    TEXT NOT NULL,
+    data        JSONB NOT NULL,
+    created_at  TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS inspiration_user ON inspiration(user_id);
+
   CREATE TABLE IF NOT EXISTS fit_feedback (
     id          TEXT PRIMARY KEY,
     garment_id  TEXT NOT NULL,
@@ -343,6 +376,13 @@ export const newId = () => globalThis.crypto.randomUUID();
 export const QUOTA = {
   garments: 2_000,
   outfits: 2_000,
+  wishlist: 500,
+  /*
+   * Lower than the rest, because each one of these is a photo and photos are
+   * capped by bytes as well as by rows. Two hundred references at a few hundred
+   * kilobytes apiece is a meaningful slice of the 256MB image budget.
+   */
+  inspiration: 200,
   /** Bytes of stored photos. Roughly 250 full-resolution phone photos. */
   imageBytes: 256 * 1024 * 1024,
 } as const;
@@ -964,6 +1004,152 @@ export async function deletePlan(userId: string, date: string): Promise<void> {
   await q("DELETE FROM plan WHERE user_id = $1 AND date = $2", [userId, date]);
 }
 
+/* -------------------------------------------------------------- wishlist -- */
+
+function rowToWishlist(row: Row): WishlistItem {
+  return {
+    id: row.id as string,
+    key: row.key as string,
+    name: row.name as string,
+    url: (row.url as string) ?? undefined,
+    imageId: (row.image_id as string) ?? undefined,
+    ...(row.data as object),
+    createdAt: row.created_at as string,
+  } as WishlistItem;
+}
+
+export async function listWishlist(userId: string): Promise<WishlistItem[]> {
+  const rows = await q(
+    `SELECT * FROM wishlist WHERE user_id = $1 ORDER BY created_at DESC LIMIT ${MAX_ROWS}`,
+    [userId],
+  );
+  return rows.map(rowToWishlist);
+}
+
+export async function getWishlistItem(userId: string, id: string): Promise<WishlistItem | null> {
+  const row = await one("SELECT * FROM wishlist WHERE id = $1 AND user_id = $2", [id, userId]);
+  return row ? rowToWishlist(row) : null;
+}
+
+/**
+ * Upserts on `(user_id, key)`, so saving the same product a second time updates
+ * the entry rather than making another one — which is what a person means by
+ * pressing save twice. The row's `id` is therefore whatever the database ended
+ * up with, not necessarily the one passed in.
+ */
+export async function saveWishlistItem(userId: string, item: WishlistItem): Promise<WishlistItem> {
+  const { id, key, name, url, imageId, createdAt, ...rest } = item;
+  const now = nowIso();
+  const row = await one(
+    `INSERT INTO wishlist (id, user_id, key, name, url, image_id, data, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
+     ON CONFLICT (user_id, key) DO UPDATE SET
+       name = EXCLUDED.name, url = EXCLUDED.url, image_id = EXCLUDED.image_id,
+       data = EXCLUDED.data
+     RETURNING *`,
+    [id, userId, key, name, url ?? null, imageId ?? null, JSON.stringify(rest), createdAt ?? now],
+  );
+  return rowToWishlist(row!);
+}
+
+export async function deleteWishlistItem(userId: string, id: string): Promise<void> {
+  await q("DELETE FROM wishlist WHERE id = $1 AND user_id = $2", [id, userId]);
+}
+
+/* ----------------------------------------------------------- inspiration -- */
+
+function rowToInspiration(row: Row): Inspiration {
+  return {
+    id: row.id as string,
+    name: row.name as string,
+    imageId: row.image_id as string,
+    ...(row.data as object),
+    createdAt: row.created_at as string,
+  } as Inspiration;
+}
+
+export async function listInspiration(userId: string): Promise<Inspiration[]> {
+  const rows = await q(
+    `SELECT * FROM inspiration WHERE user_id = $1 ORDER BY created_at DESC LIMIT ${MAX_ROWS}`,
+    [userId],
+  );
+  return rows.map(rowToInspiration);
+}
+
+export async function saveInspiration(userId: string, item: Inspiration): Promise<Inspiration> {
+  const { id, name, imageId, createdAt, ...rest } = item;
+  const now = nowIso();
+  const row = await one(
+    `INSERT INTO inspiration (id, user_id, name, image_id, data, created_at)
+     VALUES ($1, $2, $3, $4, $5::jsonb, $6)
+     RETURNING *`,
+    [id, userId, name, imageId, JSON.stringify(rest), createdAt ?? now],
+  );
+  return rowToInspiration(row!);
+}
+
+/**
+ * Removes the entry and the photo behind it, in one transaction.
+ *
+ * The image exists only to be this board entry — it is stored under the
+ * `inspiration` kind and nothing else ever points at it — so leaving it behind
+ * would spend the account's photo quota on a picture no screen can reach and no
+ * button can remove. Returns false when the account does not own the id, so the
+ * route can answer the same way it answers for one that never existed.
+ */
+export async function deleteInspiration(userId: string, id: string): Promise<boolean> {
+  await ready();
+  const client = await pool().connect();
+  try {
+    await client.query("BEGIN");
+    const gone = await client.query(
+      "DELETE FROM inspiration WHERE id = $1 AND user_id = $2 RETURNING image_id",
+      [id, userId],
+    );
+    const imageId = gone.rows[0]?.image_id as string | undefined;
+    if (imageId) {
+      await client.query("DELETE FROM image WHERE id = $1 AND user_id = $2", [imageId, userId]);
+    }
+    await client.query("COMMIT");
+    return gone.rows.length > 0;
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Deletes an image only if nothing else still points at it.
+ *
+ * A wishlist entry saved from Shop Check reuses the photo the import already
+ * fetched and stored, and that same photo is what the add-a-garment form
+ * pre-fills with — so the two can end up sharing one row. Deleting the wishlist
+ * entry must not pull the picture out from under a garment, and keeping it
+ * forever would leak the photo quota. Hence: only if it is now unreferenced.
+ */
+export async function deleteImageIfUnused(userId: string, imageId: string): Promise<boolean> {
+  const inUse = await one(
+    `SELECT 1 AS n FROM garment
+      WHERE user_id = $1 AND jsonb_exists(coalesce(data->'imageIds', '[]'::jsonb), $2)
+      UNION ALL
+     SELECT 1 FROM wishlist WHERE user_id = $1 AND image_id = $2
+      UNION ALL
+     SELECT 1 FROM inspiration WHERE user_id = $1 AND image_id = $2
+      UNION ALL
+     SELECT 1 FROM profile WHERE user_id = $1 AND jsonb_exists(coalesce(data->'bodyPhotoIds', '[]'::jsonb), $2)
+     LIMIT 1`,
+    [userId, imageId],
+  );
+  if (inUse) return false;
+  const rows = await q("DELETE FROM image WHERE id = $1 AND user_id = $2 RETURNING id", [
+    imageId,
+    userId,
+  ]);
+  return rows.length > 0;
+}
+
 /* -------------------------------------------------------------- wear log -- */
 
 function rowToWearLog(row: Row): WearLog {
@@ -1136,14 +1322,18 @@ export async function imageBytesUsed(userId: string): Promise<number> {
  */
 export async function countOwned(
   userId: string,
-  table: "garment" | "outfit",
+  table: "garment" | "outfit" | "wishlist" | "inspiration",
 ): Promise<number> {
-  const r = await one(
-    table === "garment"
-      ? "SELECT count(*)::int AS n FROM garment WHERE user_id = $1 AND archived_at IS NULL"
-      : "SELECT count(*)::int AS n FROM outfit WHERE user_id = $1",
-    [userId],
-  );
+  // The table name is not interpolated from anything a caller could supply —
+  // it comes from this union and is looked up here, so there is no way for a
+  // request to reach the query text.
+  const sql: Record<typeof table, string> = {
+    garment: "SELECT count(*)::int AS n FROM garment WHERE user_id = $1 AND archived_at IS NULL",
+    outfit: "SELECT count(*)::int AS n FROM outfit WHERE user_id = $1",
+    wishlist: "SELECT count(*)::int AS n FROM wishlist WHERE user_id = $1",
+    inspiration: "SELECT count(*)::int AS n FROM inspiration WHERE user_id = $1",
+  };
+  const r = await one(sql[table], [userId]);
   return (r?.n as number) ?? 0;
 }
 
@@ -1217,8 +1407,10 @@ export async function exportAccount(userId: string) {
   const account = await getUserById(userId);
   if (!account) return null;
 
-  const [profileRows, garments, outfits, plans, wearLogs, feedback, calibrations, images] =
-    await Promise.all([
+  const [
+    profileRows, garments, outfits, plans, wearLogs, feedback, calibrations, images,
+    wishlist, inspiration,
+  ] = await Promise.all([
       q("SELECT * FROM profile WHERE user_id = $1", [userId]),
       q("SELECT * FROM garment  WHERE user_id = $1 ORDER BY created_at", [userId]),
       q("SELECT * FROM outfit   WHERE user_id = $1 ORDER BY created_at", [userId]),
@@ -1231,6 +1423,8 @@ export async function exportAccount(userId: string) {
            FROM image WHERE user_id = $1 ORDER BY created_at`,
         [userId],
       ),
+      q("SELECT * FROM wishlist    WHERE user_id = $1 ORDER BY created_at", [userId]),
+      q("SELECT * FROM inspiration WHERE user_id = $1 ORDER BY created_at", [userId]),
     ]);
 
   return {
@@ -1240,6 +1434,8 @@ export async function exportAccount(userId: string) {
     garments: garments.map(rowToGarment),
     outfits: outfits.map(rowToOutfit),
     plans: plans.map(rowToPlan),
+    wishlist: wishlist.map(rowToWishlist),
+    inspiration: inspiration.map(rowToInspiration),
     wearLogs: wearLogs.map(rowToWearLog),
     fitFeedback: feedback.map((r) => ({
       id: r.id as string,
@@ -1286,8 +1482,8 @@ export async function deleteAccount(userId: string): Promise<boolean> {
   try {
     await client.query("BEGIN");
     for (const table of [
-      "image", "fit_feedback", "brand_calibration", "plan", "wear_log", "outfit", "garment",
-      "profile",
+      "inspiration", "wishlist", "image", "fit_feedback", "brand_calibration", "plan", "wear_log",
+      "outfit", "garment", "profile",
     ]) {
       await client.query(`DELETE FROM ${table} WHERE user_id = $1`, [userId]);
     }

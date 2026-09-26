@@ -262,6 +262,37 @@ export interface DayPlan {
   createdAt: string;
 }
 
+/**
+ * Something you are considering buying.
+ *
+ * `key` is what makes saving the same product twice one entry rather than two:
+ * the product URL when there is one, and `manual:<name>` when there isn't. It
+ * is unique per account, not globally — two people may both be looking at the
+ * same jumper, and neither should be able to see or overwrite the other's row.
+ */
+export interface WishlistItem {
+  id: string;
+  key: string;
+  name: string;
+  url?: string;
+  /** A row in `image`, served from `/api/images/<id>`. */
+  imageId?: string;
+  brand?: string;
+  price?: number;
+  currency?: string;
+  notes?: string;
+  createdAt: string;
+}
+
+/** A reference photo — someone else's outfit, saved to work back from. */
+export interface Inspiration {
+  id: string;
+  name: string;
+  imageId: string;
+  note?: string;
+  createdAt: string;
+}
+
 export interface WearLog {
   id: string;
   date: string; // ISO date

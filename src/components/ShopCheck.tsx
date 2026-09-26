@@ -59,25 +59,35 @@ export function ShopCheck({ wardrobe, initialUrl }: { wardrobe: Garment[]; initi
     return { duplicate, matches: matches.slice(0, 5), brandMatches: brandMatches.slice(0, 5) };
   }, [product, wardrobe]);
 
-  function saveWishlist() {
+  const [saving, setSaving] = useState(false);
+
+  async function saveWishlist() {
     if (!product?.name) return;
-    /*
-     * Keyed on the product URL, which is what makes two saves of the same item
-     * one entry. The old key appended `String(product.url)` — always the string
-     * "undefined" — so every product from one shop collided under a single id
-     * and each save silently replaced the last.
-     */
-    addWishlist({
-      id: product.productUrl || `manual:${product.name}`,
-      name: product.name,
-      url: product.productUrl,
-      // The route already fetched and stored the photo; this is where it lives.
-      imageUrl: imageId ? `/api/images/${imageId}` : undefined,
-      brand: product.brand,
-      price: product.pricePaid,
-      currency: product.currency,
-    });
-    status.say(`Saved ${product.name} to your wishlist.`);
+    setSaving(true);
+    try {
+      /*
+       * The server decides the dedupe key from the URL, so saving the same
+       * product twice is one entry. It used to be built here as the name plus
+       * `String(product.url)` — always the literal "undefined" — which made
+       * every product from one shop collide under a single id.
+       */
+      const saved = await addWishlist({
+        name: product.name,
+        url: product.productUrl,
+        // The import already fetched and stored the photo; this points at it.
+        imageId,
+        brand: product.brand,
+        price: product.pricePaid,
+        currency: product.currency,
+      });
+      if (!saved.ok) {
+        status.fail(saved.error ?? "That didn’t save.");
+        return;
+      }
+      status.say(`Saved ${product.name} to your wishlist.`);
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -86,7 +96,7 @@ export function ShopCheck({ wardrobe, initialUrl }: { wardrobe: Garment[]; initi
       <Status {...status.props} />
       <Card className="p-5"><div className="flex flex-col gap-3 sm:flex-row"><input type="text" inputMode="url" className="min-h-12 flex-1" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="Paste a product URL…" aria-label="Product URL" /><Button onClick={check} disabled={loading || !url.trim()}>{loading ? "Checking…" : "Check product"}</Button></div>{error && <p className="mt-3 text-sm text-[var(--color-bad)]">{error}</p>}</Card>
       {product && analysis && <>
-        <Card className="p-5"><div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-xs uppercase tracking-wide text-[var(--color-faint)]">{product.brand || "Product"}</p><h2 className="display mt-1 text-2xl">{product.name}</h2>{product.pricePaid != null && <p className="mt-1 text-sm text-[var(--color-muted)]">{product.currency || "$"}{Number(product.pricePaid).toFixed(2)}</p>}</div><div className="flex gap-2"><Button variant="ghost" onClick={saveWishlist}>Save to wishlist</Button>{product.productUrl && <a className="inline-flex min-h-11 items-center rounded-full border border-[var(--color-line)] px-4 text-sm" href={product.productUrl} target="_blank" rel="noreferrer">Open shop</a>}</div></div></Card>
+        <Card className="p-5"><div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-xs uppercase tracking-wide text-[var(--color-faint)]">{product.brand || "Product"}</p><h2 className="display mt-1 text-2xl">{product.name}</h2>{product.pricePaid != null && <p className="mt-1 text-sm text-[var(--color-muted)]">{product.currency || "$"}{Number(product.pricePaid).toFixed(2)}</p>}</div><div className="flex gap-2"><Button variant="ghost" onClick={saveWishlist} disabled={saving}>{saving ? "Saving…" : "Save to wishlist"}</Button>{product.productUrl && <a className="inline-flex min-h-11 items-center rounded-full border border-[var(--color-line)] px-4 text-sm" href={product.productUrl} target="_blank" rel="noreferrer">Open shop</a>}</div></div></Card>
         <div className="grid gap-3 sm:grid-cols-3">
           <Card className="p-5"><p className="text-xs uppercase tracking-wide text-[var(--color-faint)]">Wardrobe overlap</p><p className="display mt-2 text-3xl">{analysis.matches.length}</p><p className="mt-1 text-sm text-[var(--color-muted)]">{analysis.duplicate ? "You already own pieces in this category." : "No obvious category duplicate."}</p></Card>
           <Card className="p-5"><p className="text-xs uppercase tracking-wide text-[var(--color-faint)]">Brand history</p><p className="display mt-2 text-3xl">{analysis.brandMatches.length}</p><p className="mt-1 text-sm text-[var(--color-muted)]">Existing items from the same brand.</p></Card>

@@ -185,8 +185,23 @@ input[type="range"] {
   width: 100%;
 }
 
-label {
-  display: block;
+/*
+ * In `@layer base`, unlike the element rules above it, and the difference is
+ * not cosmetic.
+ *
+ * Tailwind puts its utilities in `@layer utilities`, and in the cascade
+ * *unlayered* rules beat layered ones outright — specificity and source order
+ * never get a say. So a bare `label { display: block }` here silently defeated
+ * `class="inline-flex"`, and a label styled as a button stretched the full
+ * width of its card with no clue why.
+ *
+ * Stacking a label above its field is the right default; winning an argument
+ * with a utility class is not. A base layer gives the first without the second.
+ */
+@layer base {
+  label {
+    display: block;
+  }
 }
 
 ::placeholder {

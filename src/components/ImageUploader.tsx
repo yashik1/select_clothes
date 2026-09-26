@@ -55,35 +55,6 @@ async function downscale(file: File): Promise<{ blob: Blob; canvas: HTMLCanvasEl
 export const canvasToJpeg = (canvas: HTMLCanvasElement) => toBlob(canvas);
 export const shrinkFile = (file: File) => downscale(file);
 
-/**
- * A much smaller JPEG, as a data URL, for the one thing that is kept in the
- * browser rather than in Postgres.
- *
- * The numbers matter here in a way they do not for an upload. `localStorage`
- * holds about 5MB per origin and counts UTF-16 code units, so it costs two
- * bytes per character — and base64 is a third larger than the bytes it encodes.
- * A single 3MB phone photo therefore wants about 8MB of a 5MB budget: not
- * "several photos then it fills up", but *the first one throws*.
- *
- * 640px at quality 0.6 lands around 40KB, which is roughly 110KB stored. That
- * is a reference thumbnail, which is all this is for.
- */
-export async function thumbnailDataUrl(file: File, maxEdge = 640): Promise<string | null> {
-  try {
-    const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
-    const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.round(bitmap.width * scale);
-    canvas.height = Math.round(bitmap.height * scale);
-    canvas.getContext("2d")!.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    bitmap.close();
-    return canvas.toDataURL("image/jpeg", 0.6);
-  } catch {
-    // No decoder for this format — HEIC in Chrome, TIFF anywhere.
-    return null;
-  }
-}
-
 /** Reads a stored image back, so colours can be pulled from what the server
  *  converted when the browser couldn't read the original. */
 export function canvasFromUrl(url: string): Promise<HTMLCanvasElement> {

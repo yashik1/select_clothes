@@ -1,120 +1,112 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import type { Inspiration } from "@/lib/types";
 import { Card, SectionTitle } from "@/components/ui";
 import { Status, useStatus } from "@/components/Status";
-import { thumbnailDataUrl } from "@/components/ImageUploader";
+import { shrinkFile } from "@/components/ImageUploader";
+import { migrateInspiration } from "@/lib/features/localMigration";
 
 /*
- * Reference images, kept in the browser.
+ * Reference photos of other people's outfits.
  *
- * Worth being plain about the compromise: this is the only thing in FitCheck
- * that does not live in Postgres. Everything else is a row, which is why a
- * `pg_dump` is a complete backup and why the account export is a complete copy.
- * These are not — they are on this device, in this browser, and they are not in
- * the export and do not go when the account does. Moving them into `image` like
- * every other picture is the right next step.
- *
- * Until then the two things that made it lose your work are fixed: the photo is
- * shrunk to a thumbnail before it is stored, and every write is guarded.
+ * Rows now, with the picture in the `image` table like every other photo in
+ * this app. It used to be base64 data URLs in `localStorage`, which was both
+ * invisible from any other device and — because that store holds about 5MB per
+ * origin and costs two bytes a character — smaller than a single phone photo.
  */
 
-const KEY = "fitcheck:inspiration:v1";
-
-/**
- * Twenty, not thirty.
- *
- * At roughly 110KB stored per thumbnail this is about 2.2MB of a ~5MB budget,
- * which leaves room for the wishlist and whatever else shares the origin.
- */
-const MAX_LOOKS = 20;
-
-type Look = { id: string; name: string; dataUrl: string; createdAt: string };
-
-function load(): Look[] {
-  try {
-    const value = JSON.parse(localStorage.getItem(KEY) || "[]");
-    return Array.isArray(value) ? value : [];
-  } catch {
-    return [];
-  }
-}
-
-/**
- * Returns false rather than throwing when the browser refuses.
- *
- * `setItem` throws `QuotaExceededError` when the origin is full, and in Safari's
- * private mode it throws whatever you do. The old code called it bare inside a
- * `FileReader.onload`, where nothing was catching — and because the state had
- * already been set, the picture appeared on screen, was never written, and was
- * simply gone on the next load. Silent data loss is the worst failure mode
- * available, so this one reports.
- */
-function save(looks: Look[]): boolean {
-  try {
-    localStorage.setItem(KEY, JSON.stringify(looks));
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-export function InspirationBoard() {
-  const [looks, setLooks] = useState<Look[]>([]);
+export function InspirationBoard({ initial }: { initial: Inspiration[] }) {
+  const [looks, setLooks] = useState<Inspiration[]>(initial);
   const [busy, setBusy] = useState(false);
   const status = useStatus();
 
-  useEffect(() => setLooks(load()), []);
+  const refresh = useCallback(async () => {
+    try {
+      const res = await fetch("/api/inspiration");
+      if (res.ok) setLooks(((await res.json()) as { items: Inspiration[] }).items);
+    } catch {
+      /* Keeps what is on screen. */
+    }
+  }, []);
+
+  useEffect(() => {
+    void (async () => {
+      const moved = await migrateInspiration();
+      if (moved > 0) {
+        status.say(`Moved ${moved} ${moved === 1 ? "reference" : "references"} into your account.`);
+        await refresh();
+      }
+    })();
+    // Once on mount; the migration clears the key it reads.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function add(file: File) {
     setBusy(true);
     try {
-      const dataUrl = await thumbnailDataUrl(file);
-      if (!dataUrl) {
-        status.fail("This browser can't read that image format. A JPEG or PNG will work.");
-        return;
-      }
-
       /*
-       * Read from storage rather than from `looks`. Two pictures chosen in
-       * quick succession both resolve against whatever the state was when they
-       * started, so the second would drop the first.
+       * Downscaled in the browser first, by the same helper the garment
+       * uploader uses — so a reference photo gets the same treatment as
+       * everything else: EXIF rotation applied, one quality setting, one size.
+       * When the browser cannot decode the format at all (HEIC in Chrome, TIFF
+       * anywhere) the original is sent and the server converts it instead.
        */
-      const next: Look[] = [
-        {
-          id:
-            globalThis.crypto?.randomUUID?.() ??
-            // `randomUUID` needs a secure context: over plain http on a LAN
-            // address it is undefined, and calling it throws.
-            `look-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
-          name: file.name.replace(/\.[^.]+$/, "") || "Untitled",
-          dataUrl,
-          createdAt: new Date().toISOString(),
-        },
-        ...load(),
-      ].slice(0, MAX_LOOKS);
+      const shrunk = await shrinkFile(file);
+      const form = new FormData();
+      form.append(
+        "file",
+        shrunk ? new File([shrunk.blob], "reference.jpg", { type: "image/jpeg" }) : file,
+      );
+      form.append("kind", "inspiration");
 
-      if (!save(next)) {
-        status.fail(
-          "There's no room left in this browser's storage. Remove a few references and try again.",
-        );
+      const up = await fetch("/api/images", { method: "POST", body: form });
+      if (!up.ok) {
+        const body = (await up.json().catch(() => ({}))) as { error?: string };
+        status.fail(body.error ?? "That image couldn’t be saved.");
         return;
       }
-      setLooks(next);
+      const { id: imageId } = (await up.json()) as { id: string };
+
+      const saved = await fetch("/api/inspiration", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: file.name.replace(/\.[^.]+$/, "") || "Reference",
+          imageId,
+        }),
+      });
+      if (!saved.ok) {
+        const body = (await saved.json().catch(() => ({}))) as { error?: string };
+        status.fail(body.error ?? "That reference couldn’t be saved.");
+        return;
+      }
+
       status.say("Saved.");
+      await refresh();
+    } catch {
+      status.fail("That didn’t save — check your connection.");
     } finally {
       setBusy(false);
     }
   }
 
-  function remove(id: string) {
-    const next = load().filter((x) => x.id !== id);
-    if (!save(next)) {
-      status.fail("Couldn't update this browser's storage.");
-      return;
+  async function remove(look: Inspiration) {
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/inspiration/${look.id}`, { method: "DELETE" });
+      if (!res.ok) {
+        status.fail("Couldn’t remove that.");
+        return;
+      }
+      status.say(`Removed ${look.name}.`);
+      await refresh();
+    } catch {
+      status.fail("Couldn’t remove that — check your connection.");
+    } finally {
+      setBusy(false);
     }
-    setLooks(next);
   }
 
   return (
@@ -141,10 +133,6 @@ export function InspirationBoard() {
             }}
           />
         </label>
-        <p className="mt-3 text-xs text-[var(--color-faint)]">
-          {looks.length} of {MAX_LOOKS} saved. These are kept in this browser, not in your account —
-          they won&rsquo;t appear on another device or in your data export.
-        </p>
       </Card>
 
       {looks.length === 0 ? (
@@ -154,7 +142,12 @@ export function InspirationBoard() {
           {looks.map((look) => (
             <Card key={look.id} className="overflow-hidden">
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={look.dataUrl} alt={look.name} className="aspect-[3/4] w-full object-cover" />
+              <img
+                src={`/api/images/${look.imageId}`}
+                alt={look.name}
+                className="aspect-[3/4] w-full object-cover"
+                loading="lazy"
+              />
               <div className="p-4">
                 <p className="truncate text-sm font-medium">{look.name}</p>
                 <div className="mt-3 flex gap-2">
@@ -165,8 +158,9 @@ export function InspirationBoard() {
                     Recreate in Studio
                   </Link>
                   <button
-                    onClick={() => remove(look.id)}
-                    className="min-h-10 text-xs text-[var(--color-muted)]"
+                    onClick={() => remove(look)}
+                    disabled={busy}
+                    className="min-h-10 text-xs text-[var(--color-muted)] disabled:opacity-50"
                   >
                     Remove
                   </button>

@@ -301,6 +301,181 @@ describe("plans and share tokens", options, () => {
   });
 });
 
+describe("wishlist and inspiration", options, () => {
+  let db: typeof import("../src/lib/db.ts");
+  let auth: typeof import("../src/lib/auth.ts");
+  let userId: string;
+  let otherId: string;
+
+  const item = (over: Partial<import("../src/lib/types.ts").WishlistItem> = {}) => ({
+    id: db.newId(),
+    key: "https://example.com/thing",
+    name: "A thing",
+    createdAt: db.nowIso(),
+    ...over,
+  });
+
+  /** A tiny real image, since `image.bytes` is NOT NULL. */
+  const storeImage = async (owner: string, kind = "garment") => {
+    const id = db.newId();
+    await db.saveImage(owner, { id, mime: "image/png", kind, createdAt: db.nowIso() }, Buffer.from([1, 2, 3]));
+    return id;
+  };
+
+  before(async () => {
+    db = await import("../src/lib/db.ts");
+    auth = await import("../src/lib/auth.ts");
+    await db.ready();
+    const a = await db.createUser(`wl-test-${Date.now()}@example.invalid`, await auth.hashPassword("a-real-passphrase"));
+    const b = await db.createUser(`wl-test-other-${Date.now()}@example.invalid`, await auth.hashPassword("a-real-passphrase"));
+    assert.ok(a && b);
+    userId = a.id;
+    otherId = b.id;
+  });
+
+  after(async () => {
+    await db.deleteAccount(userId);
+    await db.deleteAccount(otherId);
+  });
+
+  test("saving the same product twice is one entry", async () => {
+    // The whole reason there is a key at all. Pressing save again on a product
+    // page means "I still want this", not "give me a second copy".
+    const first = await db.saveWishlistItem(userId, item({ name: "Merino crew", price: 39.9 }));
+    const second = await db.saveWishlistItem(userId, item({ name: "Merino crew (sale)", price: 29.9 }));
+
+    assert.equal(second.id, first.id, "a second save made a second row");
+    const all = await db.listWishlist(userId);
+    assert.equal(all.length, 1);
+    assert.equal(all[0].price, 29.9, "the newer save did not win");
+  });
+
+  test("two accounts can want the same product", async () => {
+    /*
+     * The key is unique per account, not globally. Keyed globally — the obvious
+     * mistake, since the key is a URL — the second person to want a jumper
+     * would either fail to save it or overwrite a stranger's row.
+     */
+    await db.saveWishlistItem(otherId, item({ name: "Theirs" }));
+    assert.equal((await db.listWishlist(userId)).length, 1);
+    assert.equal((await db.listWishlist(otherId)).length, 1);
+    assert.equal((await db.listWishlist(userId))[0].name, "Merino crew (sale)");
+  });
+
+  test("a wishlist photo shared with a garment is not deleted with the entry", async () => {
+    /*
+     * An entry saved from Shop Check points at the photo the importer already
+     * fetched, and that is the same photo the add-a-garment form pre-fills
+     * with — so a garment can end up owning it. Deleting the wishlist entry
+     * must not pull the picture out from under the garment.
+     */
+    const imageId = await storeImage(userId);
+    await db.saveGarment(userId, {
+      id: db.newId(), name: "Real shirt", category: "top", subcategory: "shirt",
+      formality: 3, careState: "clean", colors: [{ hex: "#2b3a55", share: 1 }],
+      pattern: "solid", patternScale: "none", fabric: { cotton: 1 }, fitIntent: "regular",
+      measurements: {}, seasons: ["autumn"], imageIds: [imageId], wearCount: 0,
+      lastWornAt: null, archivedAt: null, createdAt: db.nowIso(), updatedAt: db.nowIso(),
+    } as never);
+
+    const saved = await db.saveWishlistItem(userId, item({ key: "https://example.com/shirt", name: "Same shirt", imageId }));
+    await db.deleteWishlistItem(userId, saved.id);
+    assert.equal(await db.deleteImageIfUnused(userId, imageId), false, "it deleted a garment's photo");
+    assert.ok(await db.getImage(userId, imageId), "the garment's photo is gone");
+  });
+
+  test("a photo nothing else points at is cleaned up", async () => {
+    // The other half: never deleting would leak the photo quota to a picture no
+    // screen can reach and no button can remove.
+    const imageId = await storeImage(userId);
+    const saved = await db.saveWishlistItem(userId, item({ key: "https://example.com/lone", name: "Lone", imageId }));
+    await db.deleteWishlistItem(userId, saved.id);
+
+    assert.equal(await db.deleteImageIfUnused(userId, imageId), true);
+    assert.equal(await db.getImage(userId, imageId), null);
+  });
+
+  test("a body photo counts as a reference too", async () => {
+    // `bodyPhotoIds` lives in the profile's JSONB rather than in a column, so
+    // it is the reference most easily forgotten by a cleanup query.
+    const imageId = await storeImage(userId, "body");
+    const profile = await db.getOrCreateProfile(userId);
+    await db.saveProfile(userId, { ...profile, bodyPhotoIds: [imageId] });
+
+    assert.equal(await db.deleteImageIfUnused(userId, imageId), false, "it deleted the body photo");
+    assert.ok(await db.getImage(userId, imageId));
+  });
+
+  test("deleting a reference takes its photo with it", async () => {
+    // Unconditional here, unlike the wishlist: an image stored under the
+    // `inspiration` kind exists only to be that board entry.
+    const imageId = await storeImage(userId, "inspiration");
+    const look = await db.saveInspiration(userId, {
+      id: db.newId(), name: "Street look", imageId, createdAt: db.nowIso(),
+    });
+
+    assert.equal(await db.deleteInspiration(userId, look.id), true);
+    assert.equal(await db.getImage(userId, imageId), null, "the photo outlived the entry");
+    assert.equal((await db.listInspiration(userId)).length, 0);
+  });
+
+  test("another account cannot delete a reference it does not own", async () => {
+    const imageId = await storeImage(userId, "inspiration");
+    const look = await db.saveInspiration(userId, {
+      id: db.newId(), name: "Mine", imageId, createdAt: db.nowIso(),
+    });
+
+    assert.equal(await db.deleteInspiration(otherId, look.id), false);
+    assert.ok(await db.getImage(userId, imageId), "someone else's delete took the photo");
+    assert.equal((await db.listInspiration(userId)).length, 1);
+  });
+
+  test("both are in the export, which is the point of moving them", async () => {
+    /*
+     * The reason this work happened. In `localStorage` neither appeared in the
+     * export, so the file claiming to be a complete copy of an account quietly
+     * was not one.
+     */
+    const dump = await db.exportAccount(userId);
+    assert.ok(Array.isArray(dump?.wishlist), "no wishlist array in the export");
+    assert.ok(Array.isArray(dump?.inspiration), "no inspiration array in the export");
+    assert.ok(dump!.wishlist.some((w) => w.name === "Merino crew (sale)"));
+    assert.ok(dump!.inspiration.some((i) => i.name === "Mine"));
+  });
+
+  test("deleting an account takes both, and their photos, with it", async () => {
+    /*
+     * Half of this Postgres guarantees and half of it does not, and the half it
+     * does not is the point.
+     *
+     * `wishlist` and `inspiration` were created with a real foreign key, so
+     * they cascade away whatever `deleteAccount` does with them. `image` has no
+     * such key — it predates accounts and carries a nullable `user_id` — so the
+     * only thing removing an account's photos is `deleteAccount` naming the
+     * table. Miss it and the pictures survive as rows nobody can see, nobody
+     * can reach, and nobody can delete, still counted against nothing.
+     *
+     * The motivation is the same as the rest of this suite: in `localStorage`
+     * both of these outlived the account entirely.
+     */
+    const doomed = await db.createUser(
+      `wl-test-doomed-${Date.now()}@example.invalid`,
+      await auth.hashPassword("a-real-passphrase"),
+    );
+    assert.ok(doomed);
+    const imageId = await storeImage(doomed.id, "inspiration");
+    await db.saveWishlistItem(doomed.id, item({ name: "Theirs" }));
+    await db.saveInspiration(doomed.id, { id: db.newId(), name: "Theirs", imageId, createdAt: db.nowIso() });
+
+    await db.deleteAccount(doomed.id);
+
+    assert.equal((await db.listWishlist(doomed.id)).length, 0);
+    assert.equal((await db.listInspiration(doomed.id)).length, 0);
+    const { rows } = await db.pool().query("SELECT 1 FROM image WHERE user_id = $1", [doomed.id]);
+    assert.equal(rows.length, 0, "a deleted account's photos survived it");
+  });
+});
+
 describe("password reset tokens", options, () => {
   let db: typeof import("../src/lib/db.ts");
   let auth: typeof import("../src/lib/auth.ts");

@@ -78,6 +78,10 @@ describe("the auth boundary", options, () => {
     ["GET", "/api/plan"],
     ["PUT", "/api/plan"],
     ["DELETE", "/api/plan"],
+    ["GET", "/api/wishlist"],
+    ["POST", "/api/wishlist"],
+    ["GET", "/api/inspiration"],
+    ["POST", "/api/inspiration"],
   ];
 
   for (const [method, path] of GUARDED) {
@@ -655,5 +659,83 @@ describe("planning a day", options, () => {
 
     const { garments } = await (await fetch(url("/api/garments"), { headers: { cookie } })).json();
     assert.equal(garments[0].wearCount, 1, "confirming did not record the wear");
+  });
+});
+
+describe("a wishlist belongs to one account", options, () => {
+  let alice: string, bob: string;
+  let aliceItemId = "";
+
+  const save = (cookie: string, body: unknown) =>
+    fetch(url("/api/wishlist"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", cookie },
+      body: JSON.stringify(body),
+    });
+
+  before(async () => {
+    alice = await account(unique("wish-alice"));
+    bob = await account(unique("wish-bob"));
+    const res = await save(alice, {
+      name: "Alice's merino", url: "https://example.com/merino", price: 39.9, currency: "£",
+    });
+    assert.equal(res.status, 201);
+    aliceItemId = (await res.json()).item.id;
+  });
+
+  test("Bob's wishlist does not contain Alice's item", async () => {
+    const res = await fetch(url("/api/wishlist"), { headers: { cookie: bob } });
+    assert.deepEqual((await res.json()).items, []);
+  });
+
+  test("Bob cannot delete Alice's item", async () => {
+    const res = await fetch(url(`/api/wishlist/${aliceItemId}`), {
+      method: "DELETE",
+      headers: { cookie: bob },
+    });
+    assert.equal(res.status, 404);
+
+    // And it is still there, which is the half a 404 alone would not prove.
+    const mine = await fetch(url("/api/wishlist"), { headers: { cookie: alice } });
+    assert.equal((await mine.json()).items.length, 1, "Bob's refused delete deleted it anyway");
+  });
+
+  test("both of them may want the same product", async () => {
+    /*
+     * The dedupe key is a URL, so keying it globally is the easy mistake — and
+     * it would mean the second person to save a jumper either failed or
+     * silently took over someone else's row.
+     */
+    const res = await save(bob, { name: "Bob's merino", url: "https://example.com/merino" });
+    assert.equal(res.status, 201, `Bob could not save a product Alice had saved: ${res.status}`);
+
+    const hers = await (await fetch(url("/api/wishlist"), { headers: { cookie: alice } })).json();
+    assert.equal(hers.items[0].name, "Alice's merino", "Bob's save overwrote Alice's");
+  });
+
+  test("saving the same product again updates rather than duplicating", async () => {
+    const res = await save(alice, { name: "Alice's merino, on sale", url: "https://example.com/merino", price: 29.9 });
+    assert.equal(res.status, 200, "a re-save was treated as a new item");
+
+    const items = (await (await fetch(url("/api/wishlist"), { headers: { cookie: alice } })).json()).items;
+    assert.equal(items.length, 1);
+    assert.equal(items[0].price, 29.9);
+    assert.equal(items[0].id, aliceItemId, "the id changed under an update");
+  });
+
+  test("a reference to an image this account does not own is refused", async () => {
+    // The board entry *is* the picture, so a foreign id is not a degraded row,
+    // it is an empty one.
+    const res = await fetch(url("/api/inspiration"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", cookie: bob },
+      body: JSON.stringify({ name: "Not mine", imageId: "some-other-accounts-image" }),
+    });
+    assert.equal(res.status, 404);
+  });
+
+  test("a nameless item is refused rather than stored blank", async () => {
+    const res = await save(alice, { name: "   " });
+    assert.equal(res.status, 400);
   });
 });

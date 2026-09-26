@@ -2,61 +2,87 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { addWishlist, listWishlist, removeWishlist, type WishlistItem } from "@/lib/features/wishlist";
+import {
+  addWishlist,
+  listWishlist,
+  removeWishlist,
+  type WishlistItem,
+} from "@/lib/features/wishlist";
+import { migrateWishlist } from "@/lib/features/localMigration";
 import { Card, SectionTitle, Button, Empty } from "@/components/ui";
 import { Status, useStatus } from "@/components/Status";
 
-export function WishlistPage() {
-  const [items, setItems] = useState<WishlistItem[]>([]);
+export function WishlistPage({ initial }: { initial: WishlistItem[] }) {
+  // Seeded from the server render, so the list is right on the first paint
+  // rather than flashing empty and filling in.
+  const [items, setItems] = useState<WishlistItem[]>(initial);
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [price, setPrice] = useState("");
+  const [busy, setBusy] = useState(false);
   const status = useStatus();
 
-  const refresh = useCallback(() => setItems(listWishlist()), []);
+  const refresh = useCallback(async () => setItems(await listWishlist()), []);
 
   useEffect(() => {
-    refresh();
-    const onChange = () => refresh();
-    window.addEventListener("fitcheck:wishlist", onChange);
-    return () => window.removeEventListener("fitcheck:wishlist", onChange);
-  }, [refresh]);
+    // Anything left in the old browser-only wishlist is moved across once.
+    void (async () => {
+      const moved = await migrateWishlist();
+      if (moved > 0) {
+        status.say(`Moved ${moved} saved ${moved === 1 ? "item" : "items"} into your account.`);
+        await refresh();
+      }
+    })();
+    // Deliberately once on mount: the migration clears the key it reads, and
+    // `status` changes identity on every message.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  function add() {
+  async function add() {
     if (!name.trim()) {
       status.fail("Give it a name first.");
       return;
     }
-
-    /*
-     * Keyed on the URL when there is one, so saving the same product twice is
-     * one entry rather than two. The previous key was the slugged name plus the
-     * raw URL, which made "Blue Shirt" and "blue shirt!" two different items
-     * and any two unnamed URLs collide.
-     */
-    const trimmedUrl = url.trim();
     const parsedPrice = price.trim() === "" ? undefined : Number(price);
     if (parsedPrice !== undefined && !Number.isFinite(parsedPrice)) {
       status.fail("That price isn’t a number.");
       return;
     }
 
-    const ok = addWishlist({
-      id: trimmedUrl || `manual:${name.trim().toLowerCase()}`,
-      name: name.trim(),
-      url: trimmedUrl || undefined,
-      price: parsedPrice,
-    });
-    if (!ok) {
-      status.fail("There’s no room left in this browser’s storage.");
-      return;
+    setBusy(true);
+    try {
+      const saved = await addWishlist({
+        name: name.trim(),
+        url: url.trim() || undefined,
+        price: parsedPrice,
+      });
+      if (!saved.ok) {
+        status.fail(saved.error ?? "That didn’t save.");
+        return;
+      }
+      setName("");
+      setUrl("");
+      setPrice("");
+      status.say(`Saved ${saved.item?.name ?? "it"}.`);
+      await refresh();
+    } finally {
+      setBusy(false);
     }
+  }
 
-    setName("");
-    setUrl("");
-    setPrice("");
-    status.say(`Saved ${name.trim()}.`);
-    refresh();
+  async function remove(item: WishlistItem) {
+    setBusy(true);
+    try {
+      const gone = await removeWishlist(item.id);
+      if (!gone.ok) {
+        status.fail(gone.error ?? "Couldn’t remove that.");
+        return;
+      }
+      status.say(`Removed ${item.name}.`);
+      await refresh();
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -92,12 +118,10 @@ export function WishlistPage() {
             inputMode="decimal"
             aria-label="Price"
           />
-          <Button onClick={add}>Save</Button>
+          <Button onClick={add} disabled={busy}>
+            {busy ? "Saving…" : "Save"}
+          </Button>
         </div>
-        <p className="mt-3 text-xs text-[var(--color-faint)]">
-          Kept in this browser, not in your account — these won&rsquo;t appear on another device or
-          in your data export.
-        </p>
       </Card>
 
       {items.length === 0 ? (
@@ -109,18 +133,16 @@ export function WishlistPage() {
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {items.map((item) => (
             <Card key={item.id} className="flex h-full flex-col p-5">
-              {item.imageUrl && (
+              {item.imageId && (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
-                  src={item.imageUrl}
+                  src={`/api/images/${item.imageId}`}
                   alt=""
                   className="mb-3 aspect-[3/4] w-full rounded-lg object-cover"
                 />
               )}
               <p className="font-medium">{item.name}</p>
-              {item.brand && (
-                <p className="text-xs text-[var(--color-faint)]">{item.brand}</p>
-              )}
+              {item.brand && <p className="text-xs text-[var(--color-faint)]">{item.brand}</p>}
               {item.price != null && (
                 <p className="mt-1 text-sm text-[var(--color-muted)]">
                   {item.currency ?? "$"}
@@ -147,15 +169,9 @@ export function WishlistPage() {
                   </a>
                 )}
                 <button
-                  onClick={() => {
-                    if (!removeWishlist(item.id)) {
-                      status.fail("Couldn’t update this browser’s storage.");
-                      return;
-                    }
-                    status.say(`Removed ${item.name}.`);
-                    refresh();
-                  }}
-                  className="min-h-10 px-2 text-xs text-[var(--color-muted)] hover:text-[var(--color-bad)]"
+                  onClick={() => remove(item)}
+                  disabled={busy}
+                  className="min-h-10 px-2 text-xs text-[var(--color-muted)] hover:text-[var(--color-bad)] disabled:opacity-50"
                 >
                   Remove
                 </button>

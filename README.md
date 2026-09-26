@@ -169,32 +169,45 @@ where it's going and roughly what it costs.
 
 ---
 
-## Kept in the browser, not in the database
+## Everything is a row
 
-Two screens break the rule that everything in this app is a row in Postgres:
-**Wishlist** and **Inspiration** both store their contents in `localStorage`.
+There is no exception to this any more, and there was one until recently.
 
-That is worth stating plainly rather than leaving for someone to discover:
-those two are on one device in one browser. They are **not** in the account
-export, they are **not** removed when the account is deleted, and they do not
-follow you to a phone. Everything else — garments, outfits, plans, wears,
-photos, calibrations — is a row, which is why a `pg_dump` is a complete backup
-and the export is a complete copy. These are the exception, and both pages say
-so on screen.
+The wishlist and the inspiration board both started in `localStorage`, which
+made them the only part of FitCheck that was not in Postgres — and the cost was
+not theoretical. They were absent from the account export, so a file claiming to
+be a complete copy of an account quietly was not one. They survived account
+deletion. They did not follow you to a phone. And the board stored full photos
+as base64 data URLs in a store that holds about 5MB per origin and costs two
+bytes per character, so a single 3MB phone photo wanted around 8MB: not "fills
+up after a few", the first one threw, and because the screen had already been
+updated the picture appeared, was never written, and was gone on reload.
 
-Two things about browser storage bit here and are worth knowing before anyone
-adds a third such screen. `localStorage` holds about 5MB per origin and counts
-UTF-16 code units, so it costs two bytes per character — and base64 is a third
-larger again than the bytes it encodes. A single 3MB phone photo as a data URL
-therefore wants about 8MB of a 5MB budget: not "several photos and then it
-fills up", but the first one throws. Inspiration images are shrunk to 640px
-thumbnails before they are stored, and capped at twenty. And `setItem` throws
-rather than returning false — on a full origin, and unconditionally in Safari's
-private mode — so every write here is guarded and reports, because the failure
-it used to produce was the worst kind: the picture appeared on screen, was
-never written, and was gone on the next load.
+Both are tables now. Photos go through `/api/images` like every other picture,
+with the same downscale, the same EXIF handling and the same byte quota.
 
-Moving both into the `image` and a `wishlist` table is the right next step.
+Three things in that move are worth knowing:
+
+**The wishlist key is unique per account, never globally.** It is a product URL,
+so the obvious mistake is to make it the primary key — and then the second
+person to want a jumper either fails to save it or silently takes over a
+stranger's row. It is `(user_id, key)`, which still makes saving the same
+product twice one entry rather than two.
+
+**Deleting a wishlist entry deletes its photo only if nothing else wants it.** An
+entry saved from Shop Check points at the picture the importer already fetched,
+and that is the same picture the add-a-garment form pre-fills with — so a
+garment may be the thing holding it. Deleting unconditionally would pull it out
+from under that garment; never deleting would leak the photo quota to a row no
+screen can reach. A reference photo is the opposite case: nothing else ever
+points at an image stored under the `inspiration` kind, so the entry and its
+picture go together in one transaction.
+
+**Anything left in the old browser store is moved across once.** Each page reads
+the old key on first load, offers the rows to the server, and clears the key
+only when every one of them landed — so a failed request is retried next time
+rather than dropped. `src/lib/features/localMigration.ts` is meant to be deleted
+once everyone has opened the app once.
 
 ---
 
@@ -581,21 +594,23 @@ src/lib/
   db.ts                    Postgres: schema, queries, image bytes
   tryon.ts                 pluggable render providers
   server/share.ts          the one read path with no session behind it
+  features/wishlist.ts     the wishlist, over the API
+  features/localMigration.ts  moves the old browser-stored rows in, once
 src/app/                   Next.js App Router pages and API routes
   manifest.ts              what makes it installable
   o/[token]/               a shared outfit, rendered for a stranger
 src/components/            UI, including client-side colour extraction
 public/sw.js               service worker — build output only, never a page
 scripts/icons.mjs          draws the app icons, so no binary is committed blind
-tests/                     323 tests; some need a database, some a browser
+tests/                     342 tests; some need a database, some a browser
 ```
 
 ## Development
 
 ```bash
 npm run dev        # dev server
-npm test           # 269 with a database, 246 without (the rest skip cleanly)
-                   # 54 more run in CI against a booted server: the auth
+npm test           # 278 with a database, 246 without (the rest skip cleanly)
+                   # 64 more run in CI against a booted server: the auth
                    # boundary over HTTP, and the layout in a real browser
 npm run icons      # redraw the app icons after changing scripts/icons.mjs
 npm run typecheck  # tsc --noEmit

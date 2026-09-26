@@ -1,61 +1,68 @@
-export interface WishlistItem {
-  id: string;
-  name: string;
-  url?: string;
-  imageUrl?: string;
-  brand?: string;
-  price?: number;
-  currency?: string;
-  category?: string;
-  color?: string;
-  notes?: string;
-  createdAt: string;
+import type { WishlistItem } from "@/lib/types";
+
+/*
+ * The wishlist, over the API.
+ *
+ * This used to be a `localStorage` module with the same function names. It is
+ * kept as a module rather than folded into the components because two screens
+ * write to it — the wishlist page and Shop Check — and they should not each
+ * reimplement the request.
+ *
+ * Every function returns what happened rather than throwing, because every
+ * caller is a click handler: an unhandled rejection there clears the spinner
+ * and leaves the button looking like it simply did not work.
+ */
+
+export type { WishlistItem };
+
+export interface Saved {
+  ok: boolean;
+  item?: WishlistItem;
+  error?: string;
 }
 
-const KEY = "fitcheck:wishlist:v1";
+/** The shape the API accepts. `key` and `id` are the server's business. */
+export type NewWishlistItem = Omit<WishlistItem, "id" | "key" | "createdAt">;
 
-function read(): WishlistItem[] {
-  if (typeof window === "undefined") return [];
+async function problem(res: Response, fallback: string): Promise<string> {
   try {
-    const value = JSON.parse(localStorage.getItem(KEY) || "[]");
-    return Array.isArray(value) ? value : [];
+    const body = (await res.json()) as { error?: string };
+    return body.error || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+export async function listWishlist(): Promise<WishlistItem[]> {
+  try {
+    const res = await fetch("/api/wishlist");
+    if (!res.ok) return [];
+    return ((await res.json()) as { items: WishlistItem[] }).items;
   } catch {
     return [];
   }
 }
 
-/**
- * Returns whether it stuck, rather than throwing.
- *
- * `setItem` throws `QuotaExceededError` on a full origin, and throws
- * unconditionally in Safari's private mode. Called bare, that rejection
- * propagates out of a click handler where nothing is catching it: the caller
- * has usually already updated the screen, so the item appears to have been
- * saved and is gone on the next load. Callers check the return.
- */
-function write(items: WishlistItem[]): boolean {
+export async function addWishlist(item: NewWishlistItem): Promise<Saved> {
   try {
-    localStorage.setItem(KEY, JSON.stringify(items));
+    const res = await fetch("/api/wishlist", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(item),
+    });
+    if (!res.ok) return { ok: false, error: await problem(res, "That didn’t save.") };
+    return { ok: true, item: ((await res.json()) as { item: WishlistItem }).item };
   } catch {
-    return false;
+    return { ok: false, error: "That didn’t save — check your connection." };
   }
-  window.dispatchEvent(new CustomEvent("fitcheck:wishlist"));
-  return true;
 }
 
-export function listWishlist() {
-  return read().sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-}
-
-export function addWishlist(item: Omit<WishlistItem, "createdAt">): boolean {
-  const current = read().filter((x) => x.id !== item.id);
-  return write([{ ...item, createdAt: new Date().toISOString() }, ...current].slice(0, 200));
-}
-
-export function removeWishlist(id: string): boolean {
-  return write(read().filter((x) => x.id !== id));
-}
-
-export function isWishlisted(id: string) {
-  return read().some((x) => x.id === id);
+export async function removeWishlist(id: string): Promise<Saved> {
+  try {
+    const res = await fetch(`/api/wishlist/${id}`, { method: "DELETE" });
+    if (!res.ok) return { ok: false, error: await problem(res, "Couldn’t remove that.") };
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "Couldn’t remove that — check your connection." };
+  }
 }
