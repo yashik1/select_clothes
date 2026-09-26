@@ -5,6 +5,14 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { DayPlan, Garment, Outfit, OccasionKey, WearLog } from "@/lib/types";
 import { OCCASIONS } from "@/lib/engine/formality";
+import {
+  dayOf,
+  mergeWorn,
+  monthGrid,
+  relativeDay,
+  wornByDay,
+  ymd,
+} from "@/lib/calendar";
 import { Button, Card, Empty, GarmentThumb, SectionTitle } from "./ui";
 import { Status, useStatus } from "./Status";
 
@@ -24,36 +32,7 @@ import { Status, useStatus } from "./Status";
  * rolled over.
  */
 
-/** A `Date` as the local calendar day it falls on. Never `toISOString`. */
-function ymd(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-
-/**
- * The local day a stored date belongs to.
- *
- * Plans are already plain `YYYY-MM-DD` and are taken at face value. Wear logs
- * are full UTC instants and have to be converted, which is the whole reason
- * this function exists rather than a `slice(0, 10)` at each call site.
- */
-function dayOf(stored: string): string {
-  if (stored.length === 10) return stored;
-  const d = new Date(stored);
-  return Number.isNaN(d.getTime()) ? stored.slice(0, 10) : ymd(d);
-}
-
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-
-/** How a day reads relative to today, which is what people actually navigate by. */
-function relative(date: string, today: string): string {
-  if (date === today) return "Today";
-  const diff = Math.round(
-    (new Date(`${date}T12:00:00`).getTime() - new Date(`${today}T12:00:00`).getTime()) / 86400000,
-  );
-  if (diff === 1) return "Tomorrow";
-  if (diff === -1) return "Yesterday";
-  return diff > 0 ? `In ${diff} days` : `${-diff} days ago`;
-}
 
 function longDate(date: string): string {
   return new Date(`${date}T12:00:00`).toLocaleDateString(undefined, {
@@ -110,34 +89,12 @@ export function Planner({
   const planFor = (date: string): DayPlan | null =>
     date in planEdits ? planEdits[date] : (serverPlans[date] ?? null);
 
-  const serverWorn = useMemo(() => {
-    const map: Record<string, string[]> = {};
-    for (const w of wearLogs) {
-      const key = dayOf(w.date);
-      map[key] = [...(map[key] ?? []), ...w.garmentIds];
-    }
-    return map;
-  }, [wearLogs]);
+  const serverWorn = useMemo(() => wornByDay(wearLogs), [wearLogs]);
 
-  const wornOn = (date: string): string[] => [
-    ...(serverWorn[date] ?? []),
-    ...(wornEdits[date] ?? []),
-  ];
+  // The merge, and why it deduplicates, is in `@/lib/calendar`.
+  const wornOn = (date: string): string[] => mergeWorn(serverWorn, wornEdits, date);
 
-  /** The grid: whole weeks, Monday first, covering the cursor's month. */
-  const cells = useMemo(() => {
-    const first = new Date(cursor.year, cursor.month, 1);
-    // getDay() is Sunday-first; shift so Monday is 0.
-    const lead = (first.getDay() + 6) % 7;
-    const start = new Date(cursor.year, cursor.month, 1 - lead);
-    const daysInMonth = new Date(cursor.year, cursor.month + 1, 0).getDate();
-    const total = Math.ceil((lead + daysInMonth) / 7) * 7;
-
-    return Array.from({ length: total }, (_, i) => {
-      const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
-      return { date: ymd(d), dayNumber: d.getDate(), inMonth: d.getMonth() === cursor.month };
-    });
-  }, [cursor]);
+  const cells = useMemo(() => monthGrid(cursor.year, cursor.month), [cursor]);
 
   const monthLabel = new Date(cursor.year, cursor.month, 1).toLocaleDateString(undefined, {
     month: "long",
@@ -152,6 +109,16 @@ export function Planner({
   }
 
   /* ---------------------------------------------------------- mutations -- */
+
+  /*
+   * Every one of these has both a `!res.ok` branch and a `catch`, and the
+   * catch is the one that is easy to leave out. These handlers are called
+   * from `onClick` without being awaited, so a rejected `fetch` — offline, DNS
+   * gone, request aborted — is an unhandled rejection that nobody sees: the
+   * spinner clears from the `finally` and the button simply appears not to have
+   * worked. That is a bad failure anywhere and a worse one here, because this
+   * app now installs to a home screen and will be opened on a train.
+   */
 
   async function planOutfit(date: string, outfit: Outfit) {
     const garmentIds = resolve(outfit.garmentIds).map((g) => g.id);
@@ -192,6 +159,8 @@ export function Planner({
       setPlanEdits((prev) => ({ ...prev, [date]: null }));
       status.say(`Cleared ${longDate(date)}.`);
       router.refresh();
+    } catch {
+      status.fail("Couldn’t clear that day.");
     } finally {
       setBusy(false);
     }
@@ -225,6 +194,8 @@ export function Planner({
       setPlanEdits((prev) => ({ ...prev, [date]: null }));
       status.say(`Logged for ${longDate(date)}.`);
       router.refresh();
+    } catch {
+      status.fail("Couldn’t log that — check your connection.");
     } finally {
       setBusy(false);
     }
@@ -245,6 +216,9 @@ export function Planner({
       const { outfit: updated } = (await res.json()) as { outfit: Outfit };
       router.refresh();
       return updated;
+    } catch {
+      status.fail("That change didn’t stick — check your connection.");
+      return null;
     } finally {
       setBusy(false);
     }
@@ -273,10 +247,14 @@ export function Planner({
     setBusy(true);
     try {
       const res = await fetch(`/api/outfits/${outfit.id}`, { method: "DELETE" });
-      if (res.ok) {
-        status.say(`Deleted ${outfit.name || "that outfit"}.`);
-        router.refresh();
+      if (!res.ok) {
+        status.fail("Couldn’t delete that.");
+        return;
       }
+      status.say(`Deleted ${outfit.name || "that outfit"}.`);
+      router.refresh();
+    } catch {
+      status.fail("Couldn’t delete that — check your connection.");
     } finally {
       setBusy(false);
     }
@@ -397,7 +375,7 @@ export function Planner({
         {/* ------------------------------------------------------- day -- */}
         <div className="space-y-4">
           <Card className="p-4">
-            <p className="font-medium">{relative(selected, today)}</p>
+            <p className="font-medium">{relativeDay(selected, today)}</p>
             <p className="text-xs text-[var(--color-muted)]">{longDate(selected)}</p>
 
             {worn.length > 0 ? (
@@ -449,7 +427,7 @@ export function Planner({
           {!worn.length && outfits.length > 0 && (
             <Card className="p-4">
               <p className="text-xs uppercase tracking-wide text-[var(--color-faint)]">
-                Put an outfit on {relative(selected, today).toLowerCase()}
+                Put an outfit on {relativeDay(selected, today).toLowerCase()}
               </p>
               <ul className="mt-3 space-y-1">
                 {outfits.slice(0, 8).map((o) => (

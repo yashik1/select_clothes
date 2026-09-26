@@ -536,6 +536,7 @@ src/lib/
   engine/packing.ts        set-cover packing optimiser
   engine/calibration.ts    per-brand fit learning
   engine/insights.ts       wardrobe analytics
+  calendar.ts              local days, the month grid, and what you wore on one
   measurements.ts          what a body can measure — bounds and unit handling
   import/product.ts        reading a garment off a shop's structured data
   import/address.ts        which addresses the server may not connect to
@@ -552,14 +553,14 @@ src/app/                   Next.js App Router pages and API routes
 src/components/            UI, including client-side colour extraction
 public/sw.js               service worker — build output only, never a page
 scripts/icons.mjs          draws the app icons, so no binary is committed blind
-tests/                     301 tests; some need a database, some a browser
+tests/                     322 tests; some need a database, some a browser
 ```
 
 ## Development
 
 ```bash
 npm run dev        # dev server
-npm test           # 248 with a database, 225 without (the rest skip cleanly)
+npm test           # 269 with a database, 246 without (the rest skip cleanly)
                    # 53 more run in CI against a booted server: the auth
                    # boundary over HTTP, and the layout in a real browser
 npm run icons      # redraw the app icons after changing scripts/icons.mjs

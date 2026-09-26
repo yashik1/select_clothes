@@ -42,26 +42,32 @@ export async function POST(req: Request) {
   if (!parsed.ok) return parsed.response;
   const input = parsed.data;
 
-  /*
-   * Same shape as the garment cap: count rows, but not on a write that
-   * replaces one. An id the account already owns is an edit, and editing the
-   * two-thousandth outfit must not be refused for being the two-thousandth.
-   */
   const existing = input.id ? await getOutfit(userId, input.id) : null;
-  if (!existing && (await countOwned(userId, "outfit")) >= QUOTA.outfits) {
-    return NextResponse.json(
-      { error: `You can save up to ${QUOTA.outfits} outfits. Delete a few first.` },
-      { status: 409 },
-    );
-  }
 
   /*
    * An id that is not ours is refused rather than quietly creating a new
    * outfit under that id. `saveOutfit`'s upsert is guarded on the owner, so
    * the write would be a silent no-op and the response would claim success.
+   *
+   * Before the quota, not after. Both orders refuse the request, but an
+   * account that happens to be at its cap would otherwise be told "you can
+   * save up to 2000 outfits" about a request that was never going to be
+   * saved — an answer that describes the wrong problem.
    */
   if (input.id && !existing) {
     return NextResponse.json({ error: "No such outfit." }, { status: 404 });
+  }
+
+  /*
+   * Same shape as the garment cap: count rows, but not on a write that
+   * replaces one. An id the account already owns is an edit, and editing the
+   * two-thousandth outfit must not be refused for being the two-thousandth.
+   */
+  if (!existing && (await countOwned(userId, "outfit")) >= QUOTA.outfits) {
+    return NextResponse.json(
+      { error: `You can save up to ${QUOTA.outfits} outfits. Delete a few first.` },
+      { status: 409 },
+    );
   }
 
   const now = nowIso();
