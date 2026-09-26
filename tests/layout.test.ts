@@ -144,6 +144,7 @@ describe("the app fits the screen it is on", options, () => {
 
       const paths = [
         "/", "/wardrobe", "/studio", "/calendar", "/profile", "/insights", "/pack", "/gaps",
+        "/try-on", "/shop-check", "/wishlist", "/capsule", "/inspiration",
       ];
       const failures: string[] = [];
 
@@ -193,6 +194,59 @@ describe("the app fits the screen it is on", options, () => {
     });
   }
 
+  test("nothing in the header sits on top of anything else", async () => {
+    /*
+     * The test that was missing, and the reason a broken header shipped.
+     *
+     * Everything else here measures the *document* against the viewport, and
+     * this failure never widened the document: the nav simply painted over the
+     * account controls inside a header that was the right size. Thirteen pills
+     * wanted 963px in a row that had about 700, because the header is capped at
+     * `max-w-6xl` — so no window was ever wide enough, and "Capsule",
+     * "Inspiration", the account email and "Sign out" were drawn on top of one
+     * another at every desktop width from 1024 to 1920.
+     *
+     * Overlap is the property, so overlap is what this asserts: a real
+     * rectangle intersection between the nav and the account controls.
+     */
+    const failures: string[] = [];
+
+    for (const width of [1920, 1440, 1280, 1100, 1024, 900, 768, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto(`${BASE}/`);
+      await page.waitForTimeout(700);
+
+      const worst = await page.evaluate(() => {
+        const header = document.querySelector("header");
+        if (!header) return { px: -1, what: "no header" };
+        const account = header.querySelector("a[href='/wardrobe/new']")?.parentElement;
+        const accBox = account?.getBoundingClientRect();
+        if (!accBox) return { px: -1, what: "no account controls" };
+
+        let px = 0;
+        let what = "";
+        for (const el of Array.from(header.querySelectorAll("nav a"))) {
+          const r = el.getBoundingClientRect();
+          const x = Math.min(r.right, accBox.right) - Math.max(r.left, accBox.left);
+          const y = Math.min(r.bottom, accBox.bottom) - Math.max(r.top, accBox.top);
+          if (x > 0 && y > 0 && x > px) {
+            px = Math.round(x);
+            what = (el.textContent || "").trim();
+          }
+        }
+        return { px, what };
+      });
+
+      if (worst.px > 0) {
+        failures.push(`${width}px: "${worst.what}" overlaps the account controls by ${worst.px}px`);
+      } else if (worst.px < 0) {
+        failures.push(`${width}px: ${worst.what}`);
+      }
+    }
+
+    assert.deepEqual(failures, [], `\n  ${failures.join("\n  ")}\n`);
+  });
+
   test("the header leaves the page most of a phone screen", async () => {
     // The bug this exists for: seven nav links wrapped into a column and the
     // header alone ran to 630px of an 844px screen.
@@ -224,7 +278,8 @@ describe("the app fits the screen it is on", options, () => {
     );
 
     for (const expected of [
-      "Today", "Wardrobe", "Studio", "Calendar", "Gaps", "Pack", "Insights", "You",
+      "Today", "Wardrobe", "Studio", "Calendar", "Gaps", "Pack", "Insights",
+      "Try On", "Shop Check", "Wishlist", "Capsule", "Inspiration", "You",
     ]) {
       assert.ok(labels.includes(expected), `"${expected}" is not reachable at 390px`);
     }

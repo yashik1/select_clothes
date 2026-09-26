@@ -24,22 +24,36 @@ function read(): WishlistItem[] {
   }
 }
 
-function write(items: WishlistItem[]) {
-  localStorage.setItem(KEY, JSON.stringify(items));
+/**
+ * Returns whether it stuck, rather than throwing.
+ *
+ * `setItem` throws `QuotaExceededError` on a full origin, and throws
+ * unconditionally in Safari's private mode. Called bare, that rejection
+ * propagates out of a click handler where nothing is catching it: the caller
+ * has usually already updated the screen, so the item appears to have been
+ * saved and is gone on the next load. Callers check the return.
+ */
+function write(items: WishlistItem[]): boolean {
+  try {
+    localStorage.setItem(KEY, JSON.stringify(items));
+  } catch {
+    return false;
+  }
   window.dispatchEvent(new CustomEvent("fitcheck:wishlist"));
+  return true;
 }
 
 export function listWishlist() {
   return read().sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
-export function addWishlist(item: Omit<WishlistItem, "createdAt">) {
+export function addWishlist(item: Omit<WishlistItem, "createdAt">): boolean {
   const current = read().filter((x) => x.id !== item.id);
-  write([{ ...item, createdAt: new Date().toISOString() }, ...current].slice(0, 200));
+  return write([{ ...item, createdAt: new Date().toISOString() }, ...current].slice(0, 200));
 }
 
-export function removeWishlist(id: string) {
-  write(read().filter((x) => x.id !== id));
+export function removeWishlist(id: string): boolean {
+  return write(read().filter((x) => x.id !== id));
 }
 
 export function isWishlisted(id: string) {

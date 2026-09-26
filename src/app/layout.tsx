@@ -56,16 +56,25 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               {user ? (
                 <>
                   {/*
-                    Inline only where all eight pills actually fit. Below that
-                    they move to their own scrolling row underneath, rather
-                    than wrapping into a column that pushed the page's first
-                    heading off the bottom of a phone screen.
-                  */}
-                  <div className="hidden min-w-0 flex-1 lg:flex">
-                    <Nav />
-                  </div>
+                    The nav is never inline any more, at any width.
 
-                  <div className="ml-auto flex shrink-0 items-center gap-2 lg:ml-0">
+                    It used to sit in this row above `lg`, which worked while
+                    there were eight destinations. There are now thirteen, and
+                    this header is capped at `max-w-6xl` — so after the wordmark
+                    and the account controls there is about 700px for a nav that
+                    wants 963px, and no viewport can change that, because the
+                    cap is on the container rather than the window. The pills
+                    duly overflowed and painted straight over the account block:
+                    294px of overlap at every width from 1024 to 1920, and the
+                    page scrolled sideways below 1100.
+
+                    On its own row they fit across the full 1152px with room to
+                    spare, still visible and still labelled. It costs about 45px
+                    of header height on a desktop, which is the right trade
+                    against a menu that hides where you are — and exactly what a
+                    phone has been doing all along.
+                  */}
+                  <div className="ml-auto flex shrink-0 items-center gap-2">
                     <Link
                       href="/wardrobe/new"
                       className="flex min-h-11 items-center rounded-full bg-[var(--color-ink)] px-4 text-sm font-medium text-white transition-colors hover:bg-[var(--color-accent-deep)] active:scale-[0.98]"
@@ -93,11 +102,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               )}
             </div>
 
-            {user && (
-              <div className="lg:hidden">
-                <Nav layout="strip" />
-              </div>
-            )}
+            {/* At every width now, not just below `lg`. See above. */}
+            {user && <Nav />}
           </div>
         </header>
 

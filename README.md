@@ -169,6 +169,35 @@ where it's going and roughly what it costs.
 
 ---
 
+## Kept in the browser, not in the database
+
+Two screens break the rule that everything in this app is a row in Postgres:
+**Wishlist** and **Inspiration** both store their contents in `localStorage`.
+
+That is worth stating plainly rather than leaving for someone to discover:
+those two are on one device in one browser. They are **not** in the account
+export, they are **not** removed when the account is deleted, and they do not
+follow you to a phone. Everything else — garments, outfits, plans, wears,
+photos, calibrations — is a row, which is why a `pg_dump` is a complete backup
+and the export is a complete copy. These are the exception, and both pages say
+so on screen.
+
+Two things about browser storage bit here and are worth knowing before anyone
+adds a third such screen. `localStorage` holds about 5MB per origin and counts
+UTF-16 code units, so it costs two bytes per character — and base64 is a third
+larger again than the bytes it encodes. A single 3MB phone photo as a data URL
+therefore wants about 8MB of a 5MB budget: not "several photos and then it
+fills up", but the first one throws. Inspiration images are shrunk to 640px
+thumbnails before they are stored, and capped at twenty. And `setItem` throws
+rather than returning false — on a full origin, and unconditionally in Safari's
+private mode — so every write here is guarded and reports, because the failure
+it used to produce was the worst kind: the picture appeared on screen, was
+never written, and was gone on the next load.
+
+Moving both into the `image` and a `wishlist` table is the right next step.
+
+---
+
 ## A plan is not a wear
 
 The calendar draws two things and they are not the same fact.
@@ -433,10 +462,15 @@ thumbnails and the score ring either side of it were both fixed widths.
 
 What it does now:
 
-- **The nav gets its own row and scrolls sideways.** All eight destinations stay
-  visible and labelled rather than folding into a hamburger — this is a bar you
-  move along constantly, and a menu that has to be opened hides where you are as
-  well as where you could go. Inline in the header from `lg` up, where it fits.
+- **The nav gets its own row and scrolls sideways.** All thirteen destinations
+  stay visible and labelled rather than folding into a hamburger — this is a bar
+  you move along constantly, and a menu that has to be opened hides where you
+  are as well as where you could go. It used to sit inline in the header row
+  from `lg` up; that stopped being possible at thirteen, because the header is
+  capped at `max-w-6xl` and the pills want 963px of an available 700. No window
+  was ever wide enough, so they overflowed and painted over the account
+  controls. On their own row they fit inside 1152px with room to spare, and
+  below about 1100px the row scrolls.
 - **Cards stack.** An outfit card puts its thumbnails above the text instead of
   beside it, so the headline gets the full width.
 - **Tap targets are thumb-sized.** Occasion pills, filters and the figure's view
@@ -553,7 +587,7 @@ src/app/                   Next.js App Router pages and API routes
 src/components/            UI, including client-side colour extraction
 public/sw.js               service worker — build output only, never a page
 scripts/icons.mjs          draws the app icons, so no binary is committed blind
-tests/                     322 tests; some need a database, some a browser
+tests/                     323 tests; some need a database, some a browser
 ```
 
 ## Development
@@ -561,7 +595,7 @@ tests/                     322 tests; some need a database, some a browser
 ```bash
 npm run dev        # dev server
 npm test           # 269 with a database, 246 without (the rest skip cleanly)
-                   # 53 more run in CI against a booted server: the auth
+                   # 54 more run in CI against a booted server: the auth
                    # boundary over HTTP, and the layout in a real browser
 npm run icons      # redraw the app icons after changing scripts/icons.mjs
 npm run typecheck  # tsc --noEmit

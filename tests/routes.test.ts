@@ -95,6 +95,12 @@ describe("the auth boundary", options, () => {
   test("pages redirect rather than rendering someone else's data", async () => {
     for (const path of [
       "/profile", "/wardrobe", "/studio", "/account", "/insights", "/pack", "/calendar",
+      // These two render nothing from the server — everything on them lives in
+      // the browser — and both shipped with no `requireUser` at all. Nothing
+      // leaked, but a signed-out visitor got a working-looking page, so "signed
+      // out" meant something different depending on which link they followed.
+      "/wishlist", "/inspiration",
+      "/try-on", "/shop-check", "/capsule",
     ]) {
       const res = await fetch(url(path), { redirect: "manual" });
       assert.ok(

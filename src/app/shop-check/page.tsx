@@ -14,10 +14,6 @@ export default async function ShopCheckPage({
   const params = await searchParams;
 
   return (
-    <ShopCheck
-      wardrobe={ctx.wardrobe}
-      profile={ctx.profile}
-      initialUrl={params.url ?? ""}
-    />
+    <ShopCheck wardrobe={ctx.wardrobe} initialUrl={params.url ?? ""} />
   );
 }

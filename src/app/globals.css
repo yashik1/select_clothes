@@ -126,12 +126,23 @@ body {
 
 /* --------------------------------------------------------------- inputs -- */
 
+/*
+ * `input:not([type])` is not belt-and-braces, it is the common case.
+ *
+ * An attribute selector matches the attribute, not the default. `<input>` with
+ * no `type` written out behaves as a text field but matches none of the rules
+ * below — so it renders with no border, no background and no padding, which
+ * reads as a missing control rather than an empty one. A whole form shipped
+ * looking like plain text for exactly this reason.
+ */
+input:not([type]),
 input[type="text"],
 input[type="number"],
 input[type="date"],
 input[type="email"],
 input[type="password"],
 input[type="search"],
+input[type="url"],
 select,
 textarea {
   background: var(--color-paper);

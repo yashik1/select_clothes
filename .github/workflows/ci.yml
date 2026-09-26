@@ -91,5 +91,5 @@ jobs:
           npx tsx --test tests/layout.test.ts | tee layout.log
           # The suite skips itself when no browser is available, and a silent
           # skip would otherwise read as a pass. Assert it really ran.
-          grep -q "^# pass 5" layout.log \
-            || { echo "the layout suite did not run its five checks"; exit 1; }
+          grep -q "^# pass 6" layout.log \
+            || { echo "the layout suite did not run its six checks"; exit 1; }
