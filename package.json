@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "next dev -p 3000",
     "build": "next build",
+    "icons": "node scripts/icons.mjs",
     "start": "next start -p ${PORT:-3000}",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",

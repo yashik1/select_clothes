@@ -230,8 +230,36 @@ export interface Outfit {
   /** Cached score at save time, so history shows what we thought back then. */
   scoreSnapshot?: number;
   pinned: boolean;
+  /**
+   * Present only while the outfit has a live share link, and it *is* the
+   * capability: anyone holding it can read this one outfit. Lives in its own
+   * column rather than in `data`, so it can be indexed for the public lookup
+   * and so an ordinary save can never overwrite or silently revoke it.
+   */
+  shareToken?: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+/**
+ * An outfit assigned to a future day.
+ *
+ * Deliberately not a `wear_log` row with tomorrow's date on it. A wear is a
+ * fact and it moves real counters — `wear_count`, `last_worn_at`, cost per
+ * wear, the rotation score. An intention must move none of them, or Insights
+ * would start reporting on clothes nobody has put on yet. Confirming a plan is
+ * what writes the wear.
+ */
+export interface DayPlan {
+  id: string;
+  /** Local calendar day, `YYYY-MM-DD`. Not a timestamp: a plan is for a date. */
+  date: string;
+  garmentIds: string[];
+  /** The saved outfit this came from, when it came from one. */
+  outfitId?: string | null;
+  occasion?: OccasionKey;
+  note?: string;
+  createdAt: string;
 }
 
 export interface WearLog {

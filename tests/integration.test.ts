@@ -112,6 +112,195 @@ describe("rate limiting", options, () => {
   });
 });
 
+describe("plans and share tokens", options, () => {
+  let db: typeof import("../src/lib/db.ts");
+  let auth: typeof import("../src/lib/auth.ts");
+  let userId: string;
+  let otherId: string;
+
+  const day = (offset: number) => {
+    const d = new Date();
+    d.setDate(d.getDate() + offset);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  };
+
+  /** Unique per call: the column is unique, and a rerun must not collide. */
+  const shareToken = () =>
+    (Date.now().toString(16) + Math.random().toString(16).slice(2)).replace(/[^0-9a-f]/g, "").padEnd(32, "0").slice(0, 32);
+
+  const plan = (date: string, garmentIds: string[], extra = {}) => ({
+    id: db.newId(),
+    date,
+    garmentIds,
+    createdAt: db.nowIso(),
+    ...extra,
+  });
+
+  before(async () => {
+    db = await import("../src/lib/db.ts");
+    auth = await import("../src/lib/auth.ts");
+    await db.ready();
+    const mine = await db.createUser(
+      `plan-test-${Date.now()}@example.invalid`,
+      await auth.hashPassword("a-real-passphrase"),
+    );
+    const theirs = await db.createUser(
+      `plan-test-other-${Date.now()}@example.invalid`,
+      await auth.hashPassword("a-real-passphrase"),
+    );
+    assert.ok(mine && theirs);
+    userId = mine.id;
+    otherId = theirs.id;
+  });
+
+  after(async () => {
+    /*
+     * `deleteAccount`, not a DELETE on app_user. Outfits and plans have no
+     * cascade from the user row, so deleting the account directly would leave
+     * this suite's outfits behind — and the next run's `setOutfitShare` would
+     * then collide with last run's token on the unique index.
+     */
+    await db.deleteAccount(userId);
+    await db.deleteAccount(otherId);
+  });
+
+  test("a second plan for a day replaces the first", async () => {
+    // The unique index is on (user_id, date), which is what makes a calendar
+    // cell unambiguous. Without it the grid would have to explain which of two
+    // outfits for Thursday it was drawing.
+    await db.savePlan(userId, plan(day(1), ["a", "b"]));
+    await db.savePlan(userId, plan(day(1), ["c"]));
+    const plans = await db.listPlans(userId, day(0), day(2));
+    assert.equal(plans.length, 1, "a day ended up with two plans");
+    assert.deepEqual(plans[0].garmentIds, ["c"]);
+  });
+
+  test("two accounts can plan the same day", async () => {
+    // The uniqueness is per account. A shared calendar would be a spectacular
+    // way for one person's Thursday to overwrite another's.
+    await db.savePlan(otherId, plan(day(1), ["theirs"]));
+    const mine = await db.listPlans(userId, day(1), day(1));
+    const theirs = await db.listPlans(otherId, day(1), day(1));
+    assert.deepEqual(mine[0].garmentIds, ["c"]);
+    assert.deepEqual(theirs[0].garmentIds, ["theirs"]);
+  });
+
+  test("the range is inclusive at both ends", async () => {
+    await db.savePlan(userId, plan(day(10), ["edge"]));
+    assert.equal((await db.listPlans(userId, day(10), day(10))).length, 1);
+    assert.equal((await db.listPlans(userId, day(11), day(12))).length, 0);
+  });
+
+  test("deleting one day leaves the others", async () => {
+    await db.deletePlan(userId, day(1));
+    const left = (await db.listPlans(userId, day(-30), day(30))).map((p) => p.date);
+    assert.ok(!left.includes(day(1)));
+    assert.ok(left.includes(day(10)), "deleting one day took another with it");
+  });
+
+  test("a share token resolves to its outfit and its owner", async () => {
+    const outfit = await db.saveOutfit(userId, {
+      id: db.newId(),
+      garmentIds: ["x"],
+      pinned: false,
+      createdAt: db.nowIso(),
+      updatedAt: db.nowIso(),
+    });
+    const token = shareToken();
+    await db.setOutfitShare(userId, outfit.id, token);
+
+    const found = await db.getOutfitByShareToken(token);
+    assert.equal(found?.outfit.id, outfit.id);
+    assert.equal(found?.userId, userId, "the lookup lost track of whose outfit it is");
+  });
+
+  test("saving an outfit cannot mint or revoke a share link", async () => {
+    /*
+     * The token is a capability and the studio saves on every edit, so the two
+     * have to be unable to touch each other. `saveOutfit` drops the field on
+     * the floor; only `setOutfitShare` writes the column.
+     */
+    const outfit = await db.saveOutfit(userId, {
+      id: db.newId(),
+      garmentIds: ["x"],
+      pinned: false,
+      createdAt: db.nowIso(),
+      updatedAt: db.nowIso(),
+    });
+    const token = shareToken();
+    const impostor = shareToken();
+    await db.setOutfitShare(userId, outfit.id, token);
+
+    // A save that claims a different token, the way a round-tripped object would.
+    await db.saveOutfit(userId, { ...outfit, name: "renamed", shareToken: impostor });
+
+    assert.equal(await db.getOutfitByShareToken(impostor), null, "a save minted a link");
+    assert.equal((await db.getOutfitByShareToken(token))?.outfit.id, outfit.id, "a save revoked a link");
+
+    // And a save with no token at all must not clear one either.
+    await db.saveOutfit(userId, { ...outfit, name: "renamed again" });
+    assert.equal((await db.getOutfitByShareToken(token))?.outfit.id, outfit.id);
+  });
+
+  test("another account cannot revoke a link it does not own", async () => {
+    const outfit = await db.saveOutfit(userId, {
+      id: db.newId(), garmentIds: ["x"], pinned: false,
+      createdAt: db.nowIso(), updatedAt: db.nowIso(),
+    });
+    const token = shareToken();
+    await db.setOutfitShare(userId, outfit.id, token);
+
+    assert.equal(await db.setOutfitShare(otherId, outfit.id, null), null);
+    assert.equal((await db.getOutfitByShareToken(token))?.outfit.id, outfit.id);
+  });
+
+  test("deleting an account kills its share links", async () => {
+    /*
+     * This is the one that needs a test. `plan` has a real foreign key, so
+     * Postgres would cascade it away whatever `deleteAccount` did — but
+     * `outfit` has none, and `outfit` is now where share tokens live. A row
+     * left behind there is not merely invisible clutter: `getOutfitByShareToken`
+     * is the one query in the app that is not scoped to an account, so an
+     * orphaned outfit means a link that still resolves after the person who
+     * minted it has deleted everything and left.
+     */
+    const doomed = await db.createUser(
+      `plan-test-doomed-${Date.now()}@example.invalid`,
+      await auth.hashPassword("a-real-passphrase"),
+    );
+    assert.ok(doomed);
+
+    const outfit = await db.saveOutfit(doomed.id, {
+      id: db.newId(), garmentIds: ["z"], pinned: false,
+      createdAt: db.nowIso(), updatedAt: db.nowIso(),
+    });
+    const token = shareToken();
+    await db.setOutfitShare(doomed.id, outfit.id, token);
+    await db.savePlan(doomed.id, plan(day(2), ["z"]));
+    // The link works right up until the account goes.
+    assert.ok(await db.getOutfitByShareToken(token));
+
+    await db.deleteAccount(doomed.id);
+
+    assert.equal(
+      await db.getOutfitByShareToken(token),
+      null,
+      "a deleted account's share link still resolves",
+    );
+    const { rows } = await db.pool().query("SELECT 1 FROM plan WHERE user_id = $1", [doomed.id]);
+    assert.equal(rows.length, 0, "a deleted account's plans survived it");
+  });
+
+  test("an export carries the plans", async () => {
+    const dump = await db.exportAccount(userId);
+    assert.ok(Array.isArray(dump?.plans), "the export has no plans array at all");
+    assert.ok(
+      dump!.plans.some((p) => p.date === day(10)),
+      "a plan was missing from the export, so the copy is not a copy",
+    );
+  });
+});
+
 describe("password reset tokens", options, () => {
   let db: typeof import("../src/lib/db.ts");
   let auth: typeof import("../src/lib/auth.ts");

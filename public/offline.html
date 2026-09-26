@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Offline — FitCheck</title>
+    <!--
+      Deliberately one self-contained file with no fonts, no stylesheet and no
+      script. It is shown precisely when the network is unavailable, so every
+      external reference on it would be a broken one.
+    -->
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #32302f;
+        --surface: #faf8f5;
+        --muted: #6f6a63;
+        --line: #e4ded4;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        background: var(--surface);
+        color: var(--ink);
+        font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      main { max-width: 26rem; text-align: center; }
+      .mark {
+        display: inline-flex;
+        width: 44px;
+        height: 44px;
+        align-items: center;
+        justify-content: center;
+        border-radius: 12px;
+        background: var(--ink);
+        color: #fff;
+        font-size: 20px;
+        font-weight: 600;
+      }
+      h1 { margin: 20px 0 8px; font-size: 1.5rem; font-weight: 600; }
+      p { margin: 0 0 12px; color: var(--muted); }
+      button {
+        margin-top: 12px;
+        min-height: 44px;
+        padding: 0 20px;
+        border: 0;
+        border-radius: 999px;
+        background: var(--ink);
+        color: #fff;
+        font: inherit;
+        font-weight: 500;
+        cursor: pointer;
+      }
+      button:active { transform: scale(0.97); }
+      .note {
+        margin-top: 28px;
+        padding-top: 20px;
+        border-top: 1px solid var(--line);
+        font-size: 0.85rem;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <span class="mark" aria-hidden="true">F</span>
+      <h1>No connection</h1>
+      <p>FitCheck needs the network to read your wardrobe — it is kept on the server, not on this device, so there is nothing here to show you offline.</p>
+      <button onclick="location.reload()">Try again</button>
+      <p class="note">
+        Your measurements, your garments and your wear history are all safe where they were. Nothing is lost by being offline.
+      </p>
+    </main>
+  </body>
+</html>

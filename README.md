@@ -63,7 +63,11 @@ same figure the You page builds — see below.
 **Studio** — build a combination, see it on your own figure, and watch six
 dimensions score it in real time, with the specific tweak that would fix each
 problem. Layers stack the way they would on you: trousers under tops, tops under
-outerwear, hems breaking over shoes.
+outerwear, hems breaking over shoes. Name what you built and keep it.
+
+**Calendar** — what you wore and what you mean to wear, on one month grid. A
+saved outfit goes onto a day; confirming it on the day turns it into a wear. A
+plan and a wear are deliberately different kinds of thing — see below.
 
 **Gaps** — the counterfactual: which single item you don't own would unlock the
 most wearable outfits. Built by adding a hypothetical garment sized to your
@@ -162,6 +166,54 @@ photo throws out every cached render along with the old one, since they're all
 pictures of a person you've just said isn't current. Nothing is sent anywhere
 until you press the button that renders it, and the panel says in advance
 where it's going and roughly what it costs.
+
+---
+
+## A plan is not a wear
+
+The calendar draws two things and they are not the same fact.
+
+A **wear** happened. It moves `wear_count`, `last_worn_at`, cost per wear, and
+the rotation score that stops the app suggesting the same shirt three days
+running. A **plan** is an intention, and it moves none of them — it lives in its
+own table for exactly that reason. If Thursday's plan incremented a wear count,
+Insights would start reporting cost per wear on clothes nobody had put on yet,
+and the rotation score would quietly penalise you for owning a calendar.
+
+Confirming a plan is what crosses the line: it writes the wear and retires the
+plan in the same request. Worn days are drawn solid, planned days dashed.
+
+Everything works in *local* days. The wear log stores UTC instants, so each one
+is converted before it is binned — a shirt worn at 9pm in Los Angeles belongs on
+that Tuesday, not on Wednesday because UTC had already rolled over.
+
+---
+
+## Sharing one outfit
+
+A saved outfit can be given a link. It is the app's only page that renders
+without a session, so it is worth being exact about what it does and doesn't
+carry.
+
+The link is 16 random bytes of hex and it *is* the authorisation — there is no
+account check behind it. It reaches one outfit, and the photos of the garments
+in that outfit, and nothing else: not the rest of the wardrobe, not the other
+photos in the same account, not the owner's email, not their measurements as
+numbers, not their location or wear history, and not the body figure, which is
+drawn from real girths and would be a disclosure of body shape. The page is
+`noindex`, and revoking takes the page and the photos away together.
+
+What it *does* carry, and what the owner is told before they send it: the full
+verdict, including fit and proportion notes. Those say things like *"your torso
+is already the longer half"* — a qualitative description of the sharer's
+proportions. That is the reason the link is worth sending at all, so it stays,
+and the share control says so in as many words rather than reassuring.
+
+One more thing the page has to handle: every reason the engine writes is in the
+second person, addressed to the wardrobe's owner. The reader here is somebody
+else, so an unframed *"your own colouring"* would tell the viewer something
+false about themselves. Rewriting the strings to the third person turns them
+into mush, so the page says once, where the eye is already going, who "you" is.
 
 ---
 
@@ -372,8 +424,8 @@ a number.
 
 This is an app you use standing in front of a wardrobe, so the phone layout is
 the one that has to be right — and for a long time it was not. Every page
-scrolled sideways, and the header was the reason: seven nav links in a wrapping
-row had nowhere to go at 390px, so they wrapped into a seven-line column. The
+scrolled sideways, and the header was the reason: the nav links sat in a
+wrapping row with nowhere to go at 390px, so they wrapped into a column. The
 header alone came to 630px of an 844px screen, three quarters of the viewport
 gone before the first heading. The garment page laid itself out 660px wide
 inside a 390px window. An outfit card gave its headline 76px, because the
@@ -381,7 +433,7 @@ thumbnails and the score ring either side of it were both fixed widths.
 
 What it does now:
 
-- **The nav gets its own row and scrolls sideways.** All seven destinations stay
+- **The nav gets its own row and scrolls sideways.** All eight destinations stay
   visible and labelled rather than folding into a hamburger — this is a bar you
   move along constantly, and a menu that has to be opened hides where you are as
   well as where you could go. Inline in the header from `lg` up, where it fits.
@@ -390,6 +442,21 @@ What it does now:
 - **Tap targets are thumb-sized.** Occasion pills, filters and the figure's view
   controls were 26–38px; the ones you press most are 44px on touch and unchanged
   on a mouse, so desktop keeps its density.
+
+- **It installs.** A web app manifest, icons, a service worker and a one-time,
+  dismissible install prompt — so the work above lands on a home screen rather
+  than in a browser tab. The part of this app that costs the most effort is
+  photographing a wardrobe one garment at a time, and that is exactly the part a
+  tab is worst at.
+
+The service worker is deliberately the most conservative one it could be. A
+Cache Storage bucket belongs to an origin and a browser profile, not to an
+account, so anything cached in it outlives signing out — and a second person
+signing in on the same browser would be served the first one's bytes. So it
+caches the content-hashed build output, the icons and an offline notice, and
+never a page or an API response. `npm run icons` regenerates the icons from
+`scripts/icons.mjs`, which draws them rather than committing an unreviewable
+binary.
 
 `tests/layout.test.ts` measures the rendered document against the width of the
 screen it is on, at 360px, 390px and 1280px, and fails if anything sticks out or
@@ -478,18 +545,24 @@ src/lib/
   auth.ts                  scrypt passwords, session tokens
   db.ts                    Postgres: schema, queries, image bytes
   tryon.ts                 pluggable render providers
+  server/share.ts          the one read path with no session behind it
 src/app/                   Next.js App Router pages and API routes
+  manifest.ts              what makes it installable
+  o/[token]/               a shared outfit, rendered for a stranger
 src/components/            UI, including client-side colour extraction
-tests/                     272 tests; some need a database, some a browser
+public/sw.js               service worker — build output only, never a page
+scripts/icons.mjs          draws the app icons, so no binary is committed blind
+tests/                     301 tests; some need a database, some a browser
 ```
 
 ## Development
 
 ```bash
 npm run dev        # dev server
-npm test           # 239 with a database, 225 without (the rest skip cleanly)
-                   # 33 more run in CI against a booted server: the auth
+npm test           # 248 with a database, 225 without (the rest skip cleanly)
+                   # 53 more run in CI against a booted server: the auth
                    # boundary over HTTP, and the layout in a real browser
+npm run icons      # redraw the app icons after changing scripts/icons.mjs
 npm run typecheck  # tsc --noEmit
 npm run build      # production build
 npm run seed       # reset to the demo wardrobe (--force if not empty)

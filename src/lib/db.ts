@@ -18,6 +18,7 @@
 import { Pool, type PoolConfig } from "pg";
 import type {
   BrandCalibration,
+  DayPlan,
   FitFeedback,
   Garment,
   Outfit,
@@ -186,6 +187,22 @@ const SCHEMA = `
   );
   CREATE INDEX IF NOT EXISTS wear_log_date ON wear_log(date);
 
+  -- What you intend to wear, which is a different kind of fact from what you
+  -- wore: no counters hang off it. One per day, because a calendar cell that
+  -- can hold two outfits has to explain which one you meant.
+  CREATE TABLE IF NOT EXISTS plan (
+    id          TEXT PRIMARY KEY,
+    -- NOT NULL, unlike the older tables: nothing predates accounts here, so
+    -- there are no orphaned rows to keep visible.
+    user_id     TEXT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
+    date        TEXT NOT NULL,
+    outfit_id   TEXT,
+    occasion    TEXT,
+    data        JSONB NOT NULL,
+    created_at  TEXT NOT NULL
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS plan_user_date ON plan(user_id, date);
+
   CREATE TABLE IF NOT EXISTS fit_feedback (
     id          TEXT PRIMARY KEY,
     garment_id  TEXT NOT NULL,
@@ -247,6 +264,21 @@ const OWNERSHIP_MIGRATIONS = [
      ON brand_calibration(user_id, brand, category)`,
 ];
 
+/**
+ * Columns added after the tables above already existed somewhere. Same
+ * contract: idempotent, safe to run on every boot, no-op on a fresh database.
+ *
+ * A partial unique index rather than a plain one — Postgres treats NULLs as
+ * distinct, so a plain unique index would also work, but saying `WHERE NOT
+ * NULL` keeps the index to the handful of outfits that are actually shared.
+ */
+const COLUMN_MIGRATIONS = [
+  `ALTER TABLE outfit ADD COLUMN IF NOT EXISTS share_token TEXT`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS outfit_share_token
+     ON outfit(share_token) WHERE share_token IS NOT NULL`,
+  `CREATE INDEX IF NOT EXISTS plan_user ON plan(user_id)`,
+];
+
 /** Arbitrary but fixed — just has to be the same number in every instance. */
 const MIGRATION_LOCK = 0x71c8ec1;
 
@@ -258,6 +290,7 @@ async function migrate(): Promise<void> {
     try {
       await client.query(SCHEMA);
       for (const statement of OWNERSHIP_MIGRATIONS) await client.query(statement);
+      for (const statement of COLUMN_MIGRATIONS) await client.query(statement);
     } finally {
       await client.query("SELECT pg_advisory_unlock($1)", [MIGRATION_LOCK]);
     }
@@ -798,6 +831,10 @@ function rowToOutfit(row: Row): Outfit {
     pinned: Boolean(row.pinned),
     scoreSnapshot: (row.score as number) ?? undefined,
     ...(row.data as object),
+    // After the spread, not before: the column is the only authority on whether
+    // a share link is live, and an old row whose `data` happens to carry the
+    // key must not be able to claim one.
+    shareToken: (row.share_token as string) ?? null,
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
   } as Outfit;
@@ -817,8 +854,14 @@ export async function getOutfit(userId: string, id: string): Promise<Outfit | nu
   return row ? rowToOutfit(row) : null;
 }
 
+/**
+ * `shareToken` is pulled out and then dropped on the floor. It is a column, so
+ * it must not end up duplicated inside `data`; and it is a capability, so
+ * saving an outfit — which the studio does on every edit — must not be able to
+ * mint one or revoke one. `setOutfitShare` is the only way it changes.
+ */
 export async function saveOutfit(userId: string, outfit: Outfit): Promise<Outfit> {
-  const { id, name, occasion, pinned, scoreSnapshot, createdAt, ...rest } = outfit;
+  const { id, name, occasion, pinned, scoreSnapshot, createdAt, shareToken: _share, ...rest } = outfit;
   const now = nowIso();
   await q(
     `INSERT INTO outfit (id, user_id, name, occasion, pinned, score, data, created_at, updated_at)
@@ -837,6 +880,88 @@ export async function saveOutfit(userId: string, outfit: Outfit): Promise<Outfit
 
 export async function deleteOutfit(userId: string, id: string): Promise<void> {
   await q("DELETE FROM outfit WHERE id = $1 AND user_id = $2", [id, userId]);
+}
+
+/**
+ * Turns a share link on (a token) or off (null). Returns the outfit as it now
+ * stands, or null if the account doesn't own it — so the caller can answer a
+ * request for someone else's outfit the same way it answers one for an outfit
+ * that was never there.
+ */
+export async function setOutfitShare(
+  userId: string,
+  id: string,
+  token: string | null,
+): Promise<Outfit | null> {
+  const row = await one(
+    `UPDATE outfit SET share_token = $1, updated_at = $2
+      WHERE id = $3 AND user_id = $4
+      RETURNING *`,
+    [token, nowIso(), id, userId],
+  );
+  return row ? rowToOutfit(row) : null;
+}
+
+/**
+ * The public lookup, and the only query in this file that is not scoped to an
+ * account — the token *is* the authorisation. It therefore returns the owner
+ * alongside the outfit, because the caller needs that id to load the garments
+ * and nothing else about the owner should travel with it.
+ */
+export async function getOutfitByShareToken(
+  token: string,
+): Promise<{ outfit: Outfit; userId: string } | null> {
+  const row = await one("SELECT * FROM outfit WHERE share_token = $1", [token]);
+  if (!row || !row.user_id) return null;
+  return { outfit: rowToOutfit(row), userId: row.user_id as string };
+}
+
+/* ----------------------------------------------------------------- plans -- */
+
+function rowToPlan(row: Row): DayPlan {
+  return {
+    id: row.id as string,
+    date: row.date as string,
+    outfitId: (row.outfit_id as string) ?? null,
+    occasion: (row.occasion as DayPlan["occasion"]) ?? undefined,
+    ...(row.data as object),
+    createdAt: row.created_at as string,
+  } as DayPlan;
+}
+
+/** Inclusive on both ends, and both are plain `YYYY-MM-DD`. */
+export async function listPlans(userId: string, from: string, to: string): Promise<DayPlan[]> {
+  const rows = await q(
+    `SELECT * FROM plan WHERE user_id = $1 AND date >= $2 AND date <= $3
+       ORDER BY date LIMIT ${MAX_ROWS}`,
+    [userId, from, to],
+  );
+  return rows.map(rowToPlan);
+}
+
+/**
+ * One plan per day, so this replaces rather than appends. The conflict target
+ * is `(user_id, date)` and the id in the row may therefore change — which is
+ * why the returned plan is the one the database ended up with, not the one
+ * passed in.
+ */
+export async function savePlan(userId: string, plan: DayPlan): Promise<DayPlan> {
+  const { id, date, outfitId, occasion, createdAt, ...rest } = plan;
+  const now = nowIso();
+  const row = await one(
+    `INSERT INTO plan (id, user_id, date, outfit_id, occasion, data, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
+     ON CONFLICT (user_id, date) DO UPDATE SET
+       outfit_id = EXCLUDED.outfit_id, occasion = EXCLUDED.occasion,
+       data = EXCLUDED.data, created_at = EXCLUDED.created_at
+     RETURNING *`,
+    [id, userId, date, outfitId ?? null, occasion ?? null, JSON.stringify(rest), createdAt ?? now],
+  );
+  return rowToPlan(row!);
+}
+
+export async function deletePlan(userId: string, date: string): Promise<void> {
+  await q("DELETE FROM plan WHERE user_id = $1 AND date = $2", [userId, date]);
 }
 
 /* -------------------------------------------------------------- wear log -- */
@@ -1092,11 +1217,12 @@ export async function exportAccount(userId: string) {
   const account = await getUserById(userId);
   if (!account) return null;
 
-  const [profileRows, garments, outfits, wearLogs, feedback, calibrations, images] =
+  const [profileRows, garments, outfits, plans, wearLogs, feedback, calibrations, images] =
     await Promise.all([
       q("SELECT * FROM profile WHERE user_id = $1", [userId]),
       q("SELECT * FROM garment  WHERE user_id = $1 ORDER BY created_at", [userId]),
       q("SELECT * FROM outfit   WHERE user_id = $1 ORDER BY created_at", [userId]),
+      q("SELECT * FROM plan     WHERE user_id = $1 ORDER BY date", [userId]),
       q("SELECT * FROM wear_log WHERE user_id = $1 ORDER BY date", [userId]),
       q("SELECT * FROM fit_feedback WHERE user_id = $1 ORDER BY created_at", [userId]),
       q("SELECT * FROM brand_calibration WHERE user_id = $1 ORDER BY brand", [userId]),
@@ -1113,6 +1239,7 @@ export async function exportAccount(userId: string) {
     profile: profileRows[0] ? rowToProfile(profileRows[0]) : null,
     garments: garments.map(rowToGarment),
     outfits: outfits.map(rowToOutfit),
+    plans: plans.map(rowToPlan),
     wearLogs: wearLogs.map(rowToWearLog),
     fitFeedback: feedback.map((r) => ({
       id: r.id as string,
@@ -1159,7 +1286,8 @@ export async function deleteAccount(userId: string): Promise<boolean> {
   try {
     await client.query("BEGIN");
     for (const table of [
-      "image", "fit_feedback", "brand_calibration", "wear_log", "outfit", "garment", "profile",
+      "image", "fit_feedback", "brand_calibration", "plan", "wear_log", "outfit", "garment",
+      "profile",
     ]) {
       await client.query(`DELETE FROM ${table} WHERE user_id = $1`, [userId]);
     }

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import {
-  listFitFeedback, listGarments, logWear, newId, nowIso,
+  deletePlan, listFitFeedback, listGarments, logWear, newId, nowIso,
   saveCalibration, saveFitFeedback, getOrCreateProfile,
 } from "@/lib/db";
 import { computeCalibrations } from "@/lib/engine/calibration";
@@ -14,6 +14,14 @@ const schema = z.object({
   garmentIds: z.array(z.string()).min(1),
   outfitId: z.string().optional(),
   date: z.string().optional(),
+  /*
+   * Set when this wear is confirming a plan: the calendar day whose plan should
+   * now stop being a plan. Sent explicitly rather than derived from `date`,
+   * because `date` may be a UTC instant and the plan is keyed on a local day —
+   * inferring one from the other gets the answer wrong by a day for anyone west
+   * of Greenwich after their evening.
+   */
+  planDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   occasion: occasionSchema,
   comfortRating: z.number().min(1).max(5).optional(),
   notes: z.string().max(500).optional(),
@@ -62,6 +70,10 @@ export async function POST(req: Request) {
     notes: input.notes,
     createdAt: now,
   });
+
+  // A plan that has happened is no longer a plan. After the wear, so a failed
+  // write leaves the intention in place rather than losing both.
+  if (input.planDate) await deletePlan(userId, input.planDate);
 
   let calibrationsUpdated = 0;
   if (input.fitFeedback?.length) {

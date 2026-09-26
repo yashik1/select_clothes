@@ -73,6 +73,11 @@ describe("the auth boundary", options, () => {
     ["GET", "/api/account/export"],
     ["DELETE", "/api/account"],
     ["POST", "/api/garments/import"],
+    ["GET", "/api/outfits"],
+    ["POST", "/api/outfits"],
+    ["GET", "/api/plan"],
+    ["PUT", "/api/plan"],
+    ["DELETE", "/api/plan"],
   ];
 
   for (const [method, path] of GUARDED) {
@@ -88,7 +93,9 @@ describe("the auth boundary", options, () => {
   }
 
   test("pages redirect rather than rendering someone else's data", async () => {
-    for (const path of ["/profile", "/wardrobe", "/studio", "/account", "/insights", "/pack"]) {
+    for (const path of [
+      "/profile", "/wardrobe", "/studio", "/account", "/insights", "/pack", "/calendar",
+    ]) {
       const res = await fetch(url(path), { redirect: "manual" });
       assert.ok(
         res.status === 307 || res.status === 302,
@@ -387,5 +394,260 @@ describe("password reset", options, () => {
     assert.equal(good.status, 200, "a mistyped password burned the only link");
 
     await db.pool().query("DELETE FROM app_user WHERE id = $1", [user.id]);
+  });
+});
+
+/*
+ * A shared outfit link is the only way into this app's data without a session,
+ * so the things that must hold are: the token is the whole authorisation, it
+ * reaches exactly one outfit and the photos of the garments in it, and revoking
+ * it takes all of that away again.
+ */
+describe("a shared outfit reaches exactly as far as its link", options, () => {
+  let alice: string, bob: string;
+  let outfitId = "";
+  let token = "";
+  let sharedImageId = "";
+  let privateImageId = "";
+
+  /** A 32×32 PNG, small enough to inline and real enough for the uploader. */
+  const PNG = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAM0lEQVR42u3OMQEAAAgDoC252H0Mj" +
+      "gVwKS0kSZIkSZIkSZIkSZIkSZIkSZIkSZIkSZK+DHjKAAGhVvxFAAAAAElFTkSuQmCC",
+    "base64",
+  );
+
+  async function upload(cookie: string): Promise<string> {
+    const form = new FormData();
+    form.append("file", new Blob([PNG], { type: "image/png" }), "g.png");
+    form.append("kind", "garment");
+    const res = await fetch(url("/api/images"), { method: "POST", headers: { cookie }, body: form });
+    assert.ok(res.ok, `image upload answered ${res.status}`);
+    return (await res.json()).id as string;
+  }
+
+  async function garment(cookie: string, name: string, imageId: string): Promise<string> {
+    const res = await fetch(url("/api/garments"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", cookie },
+      body: JSON.stringify({
+        name, category: "top", subcategory: "shirt", formality: 3, careState: "clean",
+        colors: [{ hex: "#2b3a55", share: 1 }], pattern: "solid", patternScale: "none",
+        fabric: { cotton: 1 }, fitIntent: "regular", measurements: { chestFlat: 56 },
+        seasons: ["autumn"], imageIds: [imageId],
+      }),
+    });
+    const body = await res.text();
+    assert.equal(res.status, 201, `could not create ${name}: ${body}`);
+    return JSON.parse(body).garment.id as string;
+  }
+
+  before(async () => {
+    alice = await account(unique("share-alice"));
+    bob = await account(unique("share-bob"));
+
+    sharedImageId = await upload(alice);
+    privateImageId = await upload(alice);
+    const inOutfit = await garment(alice, "Shared shirt", sharedImageId);
+    // Deliberately not put in the outfit: holding the token must not reach it.
+    await garment(alice, "Private shirt", privateImageId);
+
+    const created = await fetch(url("/api/outfits"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", cookie: alice },
+      body: JSON.stringify({ name: "Alice's Thursday", garmentIds: [inOutfit], occasion: "office" }),
+    });
+    assert.equal(created.status, 201);
+    outfitId = (await created.json()).outfit.id;
+
+    const shared = await fetch(url(`/api/outfits/${outfitId}`), {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", cookie: alice },
+      body: JSON.stringify({ shared: true }),
+    });
+    token = (await shared.json()).outfit.shareToken;
+  });
+
+  test("the token is 128 bits of hex and nothing shorter", () => {
+    // Guessing has to be infeasible: this link is the entire authorisation and
+    // there is no account check behind it.
+    assert.match(token, /^[0-9a-f]{32}$/);
+  });
+
+  test("a stranger with the link sees the outfit", async () => {
+    const res = await fetch(url(`/o/${token}`), { redirect: "manual" });
+    assert.equal(res.status, 200);
+    const html = await res.text();
+    assert.ok(html.includes("Alice&#x27;s Thursday") || html.includes("Alice's Thursday"));
+    assert.match(html, /noindex/i, "a shared link must not be indexable");
+  });
+
+  test("a stranger with the link sees the photos it contains", async () => {
+    const res = await fetch(url(`/api/images/${sharedImageId}?share=${token}`));
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get("content-type") ?? "", /^image\//);
+    // Revocable, so no shared cache may keep serving it afterwards.
+    assert.match(res.headers.get("cache-control") ?? "", /private/);
+  });
+
+  test("the link does not reach a photo outside the outfit", async () => {
+    const res = await fetch(url(`/api/images/${privateImageId}?share=${token}`));
+    assert.equal(res.status, 404, "the token reached a garment the outfit does not contain");
+  });
+
+  test("the same photo is refused without the link", async () => {
+    const res = await fetch(url(`/api/images/${sharedImageId}`));
+    assert.equal(res.status, 404);
+  });
+
+  test("a wrong or malformed token gets nothing", async () => {
+    for (const bad of ["0".repeat(32), "not-a-token", "../../etc/passwd", ""]) {
+      const res = await fetch(url(`/api/images/${sharedImageId}?share=${encodeURIComponent(bad)}`));
+      assert.equal(res.status, 404, `"${bad}" was accepted`);
+    }
+  });
+
+  test("saving the outfit again does not revoke the link", async () => {
+    // The studio saves on every edit. If that could clear the column, a link
+    // already sent to somebody would die the next time its owner touched it.
+    const res = await fetch(url("/api/outfits"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", cookie: alice },
+      body: JSON.stringify({
+        id: outfitId, name: "Alice's Thursday, revised",
+        garmentIds: [(await (await fetch(url("/api/garments"), { headers: { cookie: alice } })).json()).garments[0].id],
+        occasion: "office",
+      }),
+    });
+    assert.equal(res.status, 200);
+    assert.equal((await res.json()).outfit.shareToken, token, "an ordinary save revoked the link");
+  });
+
+  test("another account cannot share, rename or delete it", async () => {
+    for (const body of [{ shared: true }, { name: "Bob's now" }, { pinned: true }]) {
+      const res = await fetch(url(`/api/outfits/${outfitId}`), {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", cookie: bob },
+        body: JSON.stringify(body),
+      });
+      assert.equal(res.status, 404, `Bob patched Alice's outfit with ${JSON.stringify(body)}`);
+    }
+  });
+
+  test("another account cannot overwrite it by supplying its id", async () => {
+    // `saveOutfit`'s upsert is guarded on the owner, so the write would be a
+    // silent no-op — the route has to refuse rather than report success.
+    const res = await fetch(url("/api/outfits"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", cookie: bob },
+      body: JSON.stringify({ id: outfitId, garmentIds: ["anything"], occasion: "office" }),
+    });
+    assert.equal(res.status, 404);
+  });
+
+  test("revoking breaks the page and the photos together", async () => {
+    const res = await fetch(url(`/api/outfits/${outfitId}`), {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", cookie: alice },
+      body: JSON.stringify({ shared: false }),
+    });
+    assert.equal((await res.json()).outfit.shareToken, null);
+
+    assert.equal((await fetch(url(`/o/${token}`), { redirect: "manual" })).status, 404);
+    assert.equal(
+      (await fetch(url(`/api/images/${sharedImageId}?share=${token}`))).status,
+      404,
+      "a revoked link still served a photo",
+    );
+  });
+});
+
+describe("planning a day", options, () => {
+  let cookie: string;
+  let garmentId = "";
+
+  const day = (offset: number) => {
+    const d = new Date();
+    d.setDate(d.getDate() + offset);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  };
+
+  const put = (body: unknown) =>
+    fetch(url("/api/plan"), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", cookie },
+      body: JSON.stringify(body),
+    });
+
+  const list = async () =>
+    (await (await fetch(url(`/api/plan?from=${day(-60)}&to=${day(60)}`), { headers: { cookie } })).json()).plans;
+
+  before(async () => {
+    cookie = await account(unique("planner"));
+    const res = await fetch(url("/api/garments"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", cookie },
+      body: JSON.stringify({
+        name: "Planner's shirt", category: "top", subcategory: "shirt", formality: 3,
+        careState: "clean", colors: [{ hex: "#2b3a55", share: 1 }], pattern: "solid",
+        patternScale: "none", fabric: { cotton: 1 }, fitIntent: "regular",
+        measurements: { chestFlat: 56 }, seasons: ["autumn"], imageIds: [],
+      }),
+    });
+    garmentId = (await res.json()).garment.id;
+  });
+
+  test("a day holds one plan, so planning again replaces it", async () => {
+    await put({ date: day(3), garmentIds: [garmentId], occasion: "office" });
+    await put({ date: day(3), garmentIds: [garmentId], occasion: "date-night" });
+    const plans = (await list()).filter((p: { date: string }) => p.date === day(3));
+    assert.equal(plans.length, 1, "a second plan stacked instead of replacing");
+    assert.equal(plans[0].occasion, "date-night");
+  });
+
+  test("a plan moves no wear counters", async () => {
+    /*
+     * The whole reason `plan` is its own table. If an intention incremented
+     * `wear_count`, Insights would start reporting cost per wear on clothes
+     * nobody had put on yet.
+     */
+    const { garments } = await (await fetch(url("/api/garments"), { headers: { cookie } })).json();
+    const total = garments.reduce((n: number, g: { wearCount?: number }) => n + (g.wearCount ?? 0), 0);
+    assert.equal(total, 0, `planning moved ${total} wears`);
+  });
+
+  test("a date that is not a date is refused, not crashed on", async () => {
+    // `new Date("not-a-dateT00:00:00Z").toISOString()` throws a RangeError, and
+    // a failed regex leaves zod's parse dirty rather than aborted — so the
+    // refinement runs on input the pattern already rejected.
+    for (const date of ["not-a-date", "2026-02-31", "26-09-2026", "2026-13-01", ""]) {
+      const res = await put({ date, garmentIds: [garmentId] });
+      assert.equal(res.status, 400, `"${date}" answered ${res.status}`);
+    }
+  });
+
+  test("an outfit id belonging to nobody is dropped rather than stored", async () => {
+    const res = await put({ date: day(5), garmentIds: [garmentId], outfitId: "not-mine" });
+    assert.equal((await res.json()).plan.outfitId, null);
+  });
+
+  test("confirming a plan makes it a wear and retires the plan", async () => {
+    await put({ date: day(-1), garmentIds: [garmentId], occasion: "office" });
+    const res = await fetch(url("/api/wear"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", cookie },
+      body: JSON.stringify({
+        garmentIds: [garmentId], date: day(-1), planDate: day(-1), occasion: "office",
+      }),
+    });
+    assert.equal(res.status, 200);
+
+    const dates = (await list()).map((p: { date: string }) => p.date);
+    assert.ok(!dates.includes(day(-1)), "the plan outlived its own confirmation");
+    // And the other days it had nothing to do with are still there.
+    assert.ok(dates.includes(day(3)), "confirming one day cleared another");
+
+    const { garments } = await (await fetch(url("/api/garments"), { headers: { cookie } })).json();
+    assert.equal(garments[0].wearCount, 1, "confirming did not record the wear");
   });
 });

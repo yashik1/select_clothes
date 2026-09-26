@@ -366,16 +366,23 @@ export function Swatch({ hex, size = 14 }: { hex: string; size?: number }) {
 export function GarmentThumb({
   garment,
   className = "",
+  share,
 }: {
   garment: Garment;
   className?: string;
+  /**
+   * A share token, on the public page for a shared outfit. Photos are private
+   * to their account, so without it the images there would all 404 — with it,
+   * `/api/images` will serve exactly the ones this outfit's garments own.
+   */
+  share?: string;
 }) {
   const imageId = garment.imageIds?.[0];
   if (imageId) {
     return (
       // eslint-disable-next-line @next/next/no-img-element
       <img
-        src={`/api/images/${imageId}`}
+        src={share ? `/api/images/${imageId}?share=${share}` : `/api/images/${imageId}`}
         alt={garment.name}
         className={`h-full w-full object-cover ${className}`}
         loading="lazy"

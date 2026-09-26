@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { BodyMeasurements, Garment, GarmentCategory, OccasionKey, Unit } from "@/lib/types";
 import type { ScoreResult } from "@/lib/engine";
@@ -72,6 +73,20 @@ export function Studio({
   const [scoring, setScoring] = useState(false);
   const [logged, setLogged] = useState(false);
 
+  /*
+   * Saving.
+   *
+   * `?outfit=` arrives when the studio was opened from a saved outfit, and it
+   * turns the button from Save into Update — otherwise reopening something to
+   * change one piece would leave two nearly identical outfits behind. Once an
+   * unsaved arrangement has been saved, its new id is held here so a second
+   * press updates that one rather than saving a third copy.
+   */
+  const [outfitId, setOutfitId] = useState<string | null>(() => search.get("outfit"));
+  const [name, setName] = useState(() => search.get("name") ?? "");
+  const [saving, setSaving] = useState(false);
+  const [saveState, setSaveState] = useState<"idle" | "saved" | "failed">("idle");
+
   const byId = useMemo(() => new Map(wardrobe.map((g) => [g.id, g])), [wardrobe]);
   const chosen = useMemo(
     () => selected.map((id) => byId.get(id)).filter((g): g is Garment => Boolean(g)),
@@ -114,6 +129,10 @@ export function Studio({
   useEffect(() => {
     runScore(selected, occasion);
     setLogged(false);
+    // A changed selection is no longer the thing that was saved, so the
+    // confirmation has to go with it — otherwise the panel keeps claiming
+    // "Saved" about an outfit that is now two garments different.
+    setSaveState("idle");
   }, [selected, occasion, runScore]);
 
   function toggle(id: string) {
@@ -147,6 +166,38 @@ export function Studio({
     });
     setLogged(true);
     router.refresh();
+  }
+
+  async function save() {
+    if (!selected.length) return;
+    setSaving(true);
+    try {
+      const res = await fetch("/api/outfits", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: outfitId ?? undefined,
+          name: name.trim() || undefined,
+          garmentIds: selected,
+          occasion,
+          // The score as it stands, so a list of saved outfits can be ordered
+          // and labelled without rescoring every one of them on every load.
+          scoreSnapshot: result ? Math.round(result.score.total) : undefined,
+        }),
+      });
+      if (!res.ok) {
+        setSaveState("failed");
+        return;
+      }
+      const body = (await res.json()) as { outfit: { id: string } };
+      setOutfitId(body.outfit.id);
+      setSaveState("saved");
+      router.refresh();
+    } catch {
+      setSaveState("failed");
+    } finally {
+      setSaving(false);
+    }
   }
 
   const visible = wardrobe.filter((g) => {
@@ -258,12 +309,46 @@ export function Studio({
 
           {/* ------------------------------------------------ preview -- */}
           <Card className="p-4">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="font-medium">The outfit</p>
               <Button onClick={logWear} disabled={!chosen.length || logged}>
                 {logged ? "Logged" : "I wore this"}
               </Button>
             </div>
+
+            {/*
+              Keeping it. Everything the studio works out was previously thrown
+              away on navigation, which made it a calculator rather than part of
+              a wardrobe — and a plan for Thursday needs something to point at.
+            */}
+            {chosen.length > 0 && (
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <input
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  maxLength={80}
+                  placeholder="Name it — “Friday dinner”"
+                  aria-label="Outfit name"
+                  className="min-h-11 min-w-0 flex-1 basis-40 rounded-full border border-[var(--color-line)] bg-[var(--color-paper)] px-4 text-sm outline-none transition-colors placeholder:text-[var(--color-faint)] focus:border-[var(--color-ink)]"
+                />
+                <Button variant="ghost" onClick={save} disabled={saving}>
+                  {saving ? "Saving…" : outfitId ? "Update" : "Save"}
+                </Button>
+                {saveState === "saved" && (
+                  <p className="text-xs text-[var(--color-muted)]">
+                    Saved.{" "}
+                    <Link href="/calendar" className="underline hover:text-[var(--color-text)]">
+                      Put it on a day
+                    </Link>
+                  </p>
+                )}
+                {saveState === "failed" && (
+                  <p className="text-xs text-[var(--color-bad)]">
+                    That didn’t save. Check your connection and try again.
+                  </p>
+                )}
+              </div>
+            )}
 
             {chosen.length === 0 ? (
               <p className="mt-4 text-sm text-[var(--color-muted)]">

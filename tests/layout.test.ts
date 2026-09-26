@@ -142,7 +142,9 @@ describe("the app fits the screen it is on", options, () => {
     test(`nothing scrolls sideways at ${width}px`, async () => {
       await page.setViewportSize({ width, height: 844 });
 
-      const paths = ["/", "/wardrobe", "/studio", "/profile", "/insights", "/pack", "/gaps"];
+      const paths = [
+        "/", "/wardrobe", "/studio", "/calendar", "/profile", "/insights", "/pack", "/gaps",
+      ];
       const failures: string[] = [];
 
       for (const path of [...paths, `/wardrobe/${garmentId}`]) {
@@ -212,7 +214,7 @@ describe("the app fits the screen it is on", options, () => {
 
   test("every nav destination is reachable without a menu", async () => {
     // The strip scrolls sideways rather than collapsing into a hamburger, so
-    // all seven have to actually be in the document at phone width.
+    // all eight have to actually be in the document at phone width.
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(`${BASE}/`);
     await page.waitForTimeout(900);
@@ -221,7 +223,9 @@ describe("the app fits the screen it is on", options, () => {
       Array.from(document.querySelectorAll("nav a")).map((a) => (a.textContent || "").trim()),
     );
 
-    for (const expected of ["Today", "Wardrobe", "Studio", "Gaps", "Pack", "Insights", "You"]) {
+    for (const expected of [
+      "Today", "Wardrobe", "Studio", "Calendar", "Gaps", "Pack", "Insights", "You",
+    ]) {
       assert.ok(labels.includes(expected), `"${expected}" is not reachable at 390px`);
     }
   });

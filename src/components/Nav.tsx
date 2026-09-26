@@ -7,6 +7,7 @@ const NAV = [
   { href: "/", label: "Today" },
   { href: "/wardrobe", label: "Wardrobe" },
   { href: "/studio", label: "Studio" },
+  { href: "/calendar", label: "Calendar" },
   { href: "/gaps", label: "Gaps" },
   { href: "/pack", label: "Pack" },
   { href: "/insights", label: "Insights" },
@@ -14,13 +15,13 @@ const NAV = [
 ];
 
 /**
- * Seven destinations, in two shapes.
+ * Eight destinations, in two shapes.
  *
  * `inline` sits in the header row and is what a wide window gets. `strip`
  * gets its own row underneath and scrolls sideways, which is what a phone
- * gets — seven pills will not fit across 390px, and the alternative the
- * header used to reach for, wrapping, turned them into a seven-line column
- * that took three quarters of the screen before any content began.
+ * gets — eight pills will not fit across 390px, and the alternative the
+ * header used to reach for, wrapping, turned them into a column that took
+ * three quarters of the screen before any content began.
  *
  * Sideways scrolling rather than a hamburger because the labels stay visible:
  * a menu that has to be opened hides where you are as well as where you could

@@ -115,7 +115,72 @@ Beyond the original ask, these were the highest-value additions:
 
 ---
 
-## 5. Recommended next — not built
+## 5. Measured against Whering
+
+Whering is the one to beat: roughly 9–10 million users (their own figure), free,
+native on both platforms, and positioned as *"The Social Wardrobe."* It is worth
+being specific about where it is ahead, because "they catalogue, we measure" is
+true and is not a complete answer.
+
+> **A note on sourcing.** whering.co.uk, the App Store and the review sites are
+> all blocked by this environment's network egress proxy, so what follows is
+> built from search results — their own marketing copy, app-store descriptions,
+> and third-party comparisons — rather than from the live product. Figures they
+> publish about themselves are marked as such. Anything here should be checked
+> against the app before it is used to justify a roadmap.
+
+### What they have that we did not
+
+| | Whering | FitCheck, before this pass |
+|---|---|---|
+| **Cataloguing** | 100M+ item catalogue, add from any retailer site in-app, automatic background removal, AI-prefilled tags | Photograph one at a time, or paste a product link. No background removal, no auto-tagging, no bulk add |
+| **Saved outfits** | Save, name, moodboard | **The studio scored a combination and threw it away** |
+| **Planning** | Outfit planner and calendar | Wear log written and never shown |
+| **Social** | Browse friends' wardrobes, add items from them, style submissions, challenges | Nothing. No share link of any kind |
+| **Platform** | Native iOS and Android | A website |
+| **Money and sustainability** | Cost-per-wear, wear rate, closet longevity, intake tracking, wardrobe valuation, resale via Vestiaire Collective and Beyond Retro | Cost per wear and dead stock in Insights — the diagnosis without the action |
+
+### What we have that they cannot add cheaply
+
+Not one wardrobe app asks for a body. Whering's own weak spot, in every review
+that covers it, is the styling intelligence: *"basic combinations rather than
+intelligent recommendations."* That is not a bug they can fix with a better
+shuffle, because the input isn't there. Ours is the arithmetic: per-landmark
+ease in centimetres, a verdict with the fix attached, brand calibration that
+compounds, gap analysis, the packing set-cover, and the figure you can walk
+around.
+
+### The asymmetry that matters
+
+**We ask for more and help less.** Whering wants a photo and gives you a
+catalogue, background removal and prefilled tags. We want a tape measure, a body
+profile, and two garment dimensions per item — and until this pass offered no
+catalogue, no background removal and no bulk add. That gap is the single biggest
+adoption risk in the project, and it is not addressed by being right about fit.
+
+### What this pass closed
+
+1. **Saved outfits.** The data layer had been written and never wired to
+   anything — `listOutfits`, `saveOutfit` and `deleteOutfit` existed in `db.ts`,
+   the table existed, outfits counted against quota and appeared in the account
+   export, and no route or component ever called any of it. The studio is now
+   somewhere you keep things.
+2. **A calendar**, over a `plan` table that is deliberately *not* the wear log:
+   an intention moves no counters, and confirming it is what turns it into a
+   wear. Tier 1 item 4 below.
+3. **Shareable outfit links** — opt-in per outfit, revocable, `noindex`, and
+   scoped so tightly that the token reaches exactly one outfit and the photos of
+   the garments in it. Tier 2 item 6 below, and the cheapest social feature with
+   real pull, because a shared verdict is also the best acquisition surface we
+   have: it shows a stranger something no other app can tell them.
+4. **Installable as a PWA** — manifest, icons, a service worker and an install
+   prompt, so the mobile layout work has somewhere to land.
+
+Still open, and still the gap: onboarding cost, and the resale loop.
+
+---
+
+## 6. Recommended next — not built
 
 Ranked by value.
 
@@ -127,13 +192,13 @@ Ranked by value.
 
 **3. Photo → measurement estimation.** Two photos (front + side) with a reference object, or MediaPipe pose landmarks, to estimate body measurements. Removes the tape measure, which is the single biggest onboarding drop-off. Should *seed* the measurements as low-confidence and ask for confirmation — never silently replace a real one.
 
-**4. Calendar integration.** Read tomorrow's events, infer dress code, have the outfit ready before you wake up. Turns the app from a destination into a habit.
+**4. Calendar integration.** ~~A calendar~~ **— built.** Plans and wears now share a month grid, with a plan deliberately moving no counters until it is confirmed. What is *not* built is the half that needs a calendar provider: reading tomorrow's events, inferring the dress code, and having the outfit ready before you wake up.
 
 ### Tier 2
 
 **5. Bulk onboarding.** Stylebook's 8–15 hours is the category's biggest failure. Multi-item photo upload with automatic segmentation, plus receipt/order-history import.
 
-**6. Second opinion.** Share an outfit as a link, collect votes. The most-requested social feature that isn't a feed nobody reads.
+**6. Second opinion.** **— half built.** Sharing an outfit as a link is done: opt-in, revocable, and scoped to that one outfit. Collecting *votes* on it is not, and that is the half that makes it social rather than merely readable.
 
 **7. Resale triage.** Dead stock already surfaces in Insights — connect it to a listing flow with a suggested price.
 
@@ -148,7 +213,7 @@ Ranked by value.
 
 ---
 
-## 6. Honest limitations
+## 7. Honest limitations
 
 - **Fit prediction is not measurement.** It reasons about ease at landmarks; it can't see how a garment drapes, where it pulls diagonally, or how a curved seam sits. It will tell you a shirt is 4cm tight at the chest. It won't tell you the armhole is cut wrong.
 - **Size-chart inference is genuinely weak** — hence 45% confidence and the constant nudge toward measuring. Brand drift is real, which is exactly why the calibration loop exists.
@@ -162,6 +227,15 @@ Ranked by value.
 ## Sources
 
 - [The Best Wardrobe Apps 2026: Compared & Ranked — Indyx](https://www.myindyx.com/blog/the-best-wardrobe-apps)
+- [Whering](https://whering.co.uk/) — their own product page (unreachable from this environment; read via search results)
+- [Whering on Google Play](https://play.google.com/store/apps/details?id=com.whering.app&hl=en_US)
+- [Whering: Your Digital Closet — MWM](https://mwm.ai/apps/whering-your-digital-closet/1519461680)
+- [Best Wardrobe Apps 2026: Organise & Track What You Own — COSH!](https://cosh.eco/en/articles/best-digital-wardrobe-app)
+- [7 Best Whering Alternatives in 2026 — Nouva](https://www.nouva.app/blog/best-whering-alternatives-2026)
+- [GetWardrobe vs Whering — feature-by-feature](https://getwardrobe.com/compare/whering/)
+- [Fits vs Whering 2026 — StylePal](https://www.stylepal.app/news/fits-vs-whering)
+- [Save Your Wardrobe vs. Whering — Indyx](https://www.myindyx.com/versus/save-your-wardrobe-vs-whering)
+- [Whering Wardrobe App Review: Letting AI Style Me For A Week — Style With In Grace](https://stylewithingrace.com/whering-wardrobe-app-review/)
 - [Vesta vs Indyx vs Whering vs Acloset](https://vestatheapp.com/blog/vesta-vs-indyx-whering-acloset)
 - [Best Wardrobe Apps 2026: 10 Outfit Planners Compared](https://getwardrobe.com/compare/)
 - [Best Wardrobe Apps in 2026: 10 Closet Apps Tested & Ranked — Nouva](https://www.nouva.app/blog/best-wardrobe-apps-2026-comparison)

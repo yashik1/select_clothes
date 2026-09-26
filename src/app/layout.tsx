@@ -1,8 +1,9 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import Link from "next/link";
 import "./globals.css";
 import { currentUser } from "@/lib/server/session";
 import { AccountMenu } from "@/components/AccountMenu";
+import { InstallPrompt } from "@/components/InstallPrompt";
 import { Nav } from "@/components/Nav";
 import { sans, serif } from "./fonts";
 
@@ -10,6 +11,25 @@ export const metadata: Metadata = {
   title: "FitCheck — will this actually work?",
   description:
     "Your wardrobe and your measurements, scored together. Explainable outfit advice grounded in centimetres, not vibes.",
+  // `manifest.ts` generates the file; this is the link element that points at it.
+  manifest: "/manifest.webmanifest",
+  applicationName: "FitCheck",
+  appleWebApp: { capable: true, title: "FitCheck", statusBarStyle: "default" },
+  // Only the Apple one. The browser tab icon is `src/app/icon.svg`, which Next
+  // wires up by file convention, and declaring `icon` here as well would
+  // replace it with a worse raster copy.
+  icons: { apple: [{ url: "/apple-touch-icon.png", sizes: "180x180" }] },
+};
+
+export const viewport: Viewport = {
+  // Matches the manifest's background, so an installed app's status bar and the
+  // area behind a bounced scroll are the page colour rather than white.
+  themeColor: "#faf8f5",
+  width: "device-width",
+  initialScale: 1,
+  // Not locked: pinching a garment photo to look at a seam is a reasonable
+  // thing to want, and disabling zoom is an accessibility failure besides.
+  maximumScale: 5,
 };
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
@@ -36,9 +56,9 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               {user ? (
                 <>
                   {/*
-                    Inline only where seven pills actually fit. Below that they
-                    move to their own scrolling row underneath, rather than
-                    wrapping into a column that pushed the page's first
+                    Inline only where all eight pills actually fit. Below that
+                    they move to their own scrolling row underneath, rather
+                    than wrapping into a column that pushed the page's first
                     heading off the bottom of a phone screen.
                   */}
                   <div className="hidden min-w-0 flex-1 lg:flex">
@@ -87,6 +107,13 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           Every score on this site is arithmetic over your measurements, not a
           guess from a model. Open any verdict to see the numbers behind it.
         </footer>
+
+        {/*
+          Registers the service worker for everyone; only *offers* to install to
+          someone already signed in. A person still deciding whether to make an
+          account does not need a second thing to say no to.
+        */}
+        <InstallPrompt offer={Boolean(user)} />
       </body>
     </html>
   );

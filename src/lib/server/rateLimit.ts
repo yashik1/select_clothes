@@ -68,6 +68,17 @@ export const LIMITS = {
    * stops a loop filling it. Sixty an hour is far more than anyone dresses.
    */
   wear: { max: 60, windowSeconds: 3600 },
+  /**
+   * A shared outfit link is the only page that serves data without a session,
+   * and rendering one costs four queries and a full scoring pass. The token is
+   * 128 bits, so this is not guarding against enumeration — it bounds the cost
+   * of a link that gets posted somewhere busy, or hammered deliberately.
+   *
+   * Generous on purpose: sixty views a minute is far more traffic than a link
+   * sent to a few friends will ever see, and refusing a real reader is worse
+   * than serving one more render.
+   */
+  share: { max: 60, windowSeconds: 60 },
 } satisfies Record<string, Limit>;
 
 /** Counts one attempt against `key` and says whether it is allowed. */
@@ -131,9 +142,18 @@ let warned = false;
  * change.
  */
 export function caller(req: Request): Caller {
-  const forwarded = req.headers.get("x-forwarded-for");
+  return callerFromHeaders(req.headers);
+}
+
+/**
+ * The same, for a server component, which is handed `headers()` rather than a
+ * `Request`. Only the headers were ever read, so this is where the logic lives
+ * and `caller` delegates to it.
+ */
+export function callerFromHeaders(headers: Headers): Caller {
+  const forwarded = headers.get("x-forwarded-for");
   const first = forwarded?.split(",")[0]?.trim();
-  const id = first || req.headers.get("x-real-ip")?.trim();
+  const id = first || headers.get("x-real-ip")?.trim();
   if (id) return { id, identified: true };
 
   if (!warned) {
