@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import Link from "next/link";
 import {
   addWishlist,
@@ -8,7 +8,6 @@ import {
   removeWishlist,
   type WishlistItem,
 } from "@/lib/features/wishlist";
-import { migrateWishlist } from "@/lib/features/localMigration";
 import { Card, SectionTitle, Button, Empty } from "@/components/ui";
 import { Status, useStatus } from "@/components/Status";
 
@@ -23,20 +22,6 @@ export function WishlistPage({ initial }: { initial: WishlistItem[] }) {
   const status = useStatus();
 
   const refresh = useCallback(async () => setItems(await listWishlist()), []);
-
-  useEffect(() => {
-    // Anything left in the old browser-only wishlist is moved across once.
-    void (async () => {
-      const moved = await migrateWishlist();
-      if (moved > 0) {
-        status.say(`Moved ${moved} saved ${moved === 1 ? "item" : "items"} into your account.`);
-        await refresh();
-      }
-    })();
-    // Deliberately once on mount: the migration clears the key it reads, and
-    // `status` changes identity on every message.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   async function add() {
     if (!name.trim()) {

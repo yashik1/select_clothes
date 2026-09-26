@@ -203,12 +203,6 @@ screen can reach. A reference photo is the opposite case: nothing else ever
 points at an image stored under the `inspiration` kind, so the entry and its
 picture go together in one transaction.
 
-**Anything left in the old browser store is moved across once.** Each page reads
-the old key on first load, offers the rows to the server, and clears the key
-only when every one of them landed — so a failed request is retried next time
-rather than dropped. `src/lib/features/localMigration.ts` is meant to be deleted
-once everyone has opened the app once.
-
 ---
 
 ## A plan is not a wear
@@ -595,7 +589,6 @@ src/lib/
   tryon.ts                 pluggable render providers
   server/share.ts          the one read path with no session behind it
   features/wishlist.ts     the wishlist, over the API
-  features/localMigration.ts  moves the old browser-stored rows in, once
 src/app/                   Next.js App Router pages and API routes
   manifest.ts              what makes it installable
   o/[token]/               a shared outfit, rendered for a stranger

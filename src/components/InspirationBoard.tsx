@@ -1,12 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import type { Inspiration } from "@/lib/types";
 import { Card, SectionTitle } from "@/components/ui";
 import { Status, useStatus } from "@/components/Status";
 import { shrinkFile } from "@/components/ImageUploader";
-import { migrateInspiration } from "@/lib/features/localMigration";
 
 /*
  * Reference photos of other people's outfits.
@@ -29,18 +28,6 @@ export function InspirationBoard({ initial }: { initial: Inspiration[] }) {
     } catch {
       /* Keeps what is on screen. */
     }
-  }, []);
-
-  useEffect(() => {
-    void (async () => {
-      const moved = await migrateInspiration();
-      if (moved > 0) {
-        status.say(`Moved ${moved} ${moved === 1 ? "reference" : "references"} into your account.`);
-        await refresh();
-      }
-    })();
-    // Once on mount; the migration clears the key it reads.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function add(file: File) {
