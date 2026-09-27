@@ -28,7 +28,7 @@ export function Card({
     <Tag
       style={delay !== undefined ? ({ "--delay": `${delay}ms` } as React.CSSProperties) : undefined}
       className={[
-        "relative rounded-3xl border border-[var(--color-line)] bg-[var(--color-paper)]",
+        "relative rounded-2xl border border-[var(--color-line)] bg-[var(--color-paper)]",
         "shadow-[0_1px_2px_rgba(50,48,47,0.04)]",
         delay !== undefined ? "rise" : "",
         interactive
