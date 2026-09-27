@@ -26,7 +26,9 @@
      reserved for meaning. */
   --color-accent: #32302f;
   --color-accent-deep: #1c1b1a;
-  --color-accent-soft: #f0ece5;
+  --color-accent-soft: #edf1eb;
+  --color-brand: #496454;
+  --color-brand-soft: #edf1eb;
 
   /* Contemporary primaries: warm rather than digital. */
   --color-yellow: #f2c230;
@@ -69,6 +71,7 @@
 body {
   background: var(--color-surface);
   color: var(--color-text);
+  min-width: 320px;
   font-family: var(--font-body);
   -webkit-font-smoothing: antialiased;
 }
