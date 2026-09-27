@@ -194,6 +194,15 @@ person to want a jumper either fails to save it or silently takes over a
 stranger's row. It is `(user_id, key)`, which still makes saving the same
 product twice one entry rather than two.
 
+**The old browser keys are swept up on any page.** Nothing reads them any more,
+so whatever is still under them is dead weight — and for the board that is whole
+photos as base64, which can be megabytes of an origin's ~5MB budget held
+forever. `ClearLegacyStorage` removes both keys from the root layout rather than
+from the two pages it cleans up after, because the person whose browser is still
+holding their old board is precisely the one who never opens that page. It
+renders nothing, leaves no trace, and can be deleted once everyone has loaded
+the app once.
+
 **Deleting a wishlist entry deletes its photo only if nothing else wants it.** An
 entry saved from Shop Check points at the picture the importer already fetched,
 and that is the same picture the add-a-garment form pre-fills with — so a

@@ -3,6 +3,7 @@ import Link from "next/link";
 import "./globals.css";
 import { currentUser } from "@/lib/server/session";
 import { AccountMenu } from "@/components/AccountMenu";
+import { ClearLegacyStorage } from "@/components/ClearLegacyStorage";
 import { InstallPrompt } from "@/components/InstallPrompt";
 import { Nav } from "@/components/Nav";
 import { sans, serif } from "./fonts";
@@ -120,6 +121,13 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           account does not need a second thing to say no to.
         */}
         <InstallPrompt offer={Boolean(user)} />
+
+        {/*
+          Renders nothing. It is here rather than on the wishlist and
+          inspiration pages because the person whose browser is still holding
+          megabytes of their old board is the one who never opens that page.
+        */}
+        <ClearLegacyStorage />
       </body>
     </html>
   );
